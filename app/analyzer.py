@@ -19,9 +19,11 @@ missing (the pipeline then degrades gracefully).
 """
 from __future__ import annotations
 
+import json
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -113,6 +115,99 @@ def extract_wav(video: Path, ffprobe_unused: str | None, ffmpeg: str) -> Path | 
         return None
 
 
+# --- per-video analysis cache -----------------------------------------------
+# Transcript, scene boundaries and the audio-energy array are computed at most
+# once per video and cached to data/transcripts/{video_id}.json so the agent's
+# on-demand tools, re-renders (review UI) and retry loops never re-transcribe.
+
+def _cache_file(video_id: str) -> Path:
+    safe = "".join(ch for ch in video_id if ch.isalnum() or ch in ("-", "_"))[:80] or "video"
+    return cfg.TRANSCRIPTS_DIR / f"{safe}.json"
+
+
+def _cache_load(video_id: str) -> dict[str, Any]:
+    p = _cache_file(video_id)
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _cache_save(video_id: str, meta: dict[str, Any]) -> None:
+    try:
+        cfg.TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+        _cache_file(video_id).write_text(json.dumps(meta), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def ensure_words(video_id: str | None, source: Path) -> list["Word"]:
+    """Cached whisper word timestamps (empty list if silent / no model)."""
+    if not source or not Path(source).is_file():
+        return []
+    meta = _cache_load(video_id) if video_id else {}
+    if "words" in meta:
+        return [Word(*w) for w in meta["words"]]
+    c = cfg.get_config()
+    try:
+        words = transcribe(Path(source), str(c.get("whisper.model", "small")),
+                           str(c.get("whisper.compute_type", "int8")))
+    except Exception:
+        words = []
+    if video_id:
+        meta["words"] = [[round(w.start, 3), round(w.end, 3), w.text] for w in words]
+        _cache_save(video_id, meta)
+    return words
+
+
+def cached_words(video_id: str | None) -> list["Word"]:
+    """Read the transcript cache WITHOUT ever transcribing (fast, for re-renders)."""
+    meta = _cache_load(video_id) if video_id else {}
+    return [Word(*w) for w in meta.get("words", [])]
+
+
+def ensure_scenes(video_id: str | None, source: Path) -> list[float]:
+    """Cached PySceneDetect content boundaries (seconds)."""
+    if not source or not Path(source).is_file():
+        return []
+    meta = _cache_load(video_id) if video_id else {}
+    if "scenes" in meta:
+        return [float(s) for s in meta["scenes"]]
+    scenes = detect_scenes(Path(source))
+    if video_id:
+        meta["scenes"] = [round(s, 3) for s in scenes]
+        _cache_save(video_id, meta)
+    return scenes
+
+
+def ensure_energy(video_id: str | None, source: Path,
+                  step_s: float = 0.5) -> tuple[list[float], list[float], float]:
+    """Cached (times, rms 0..1 normalized, raw_peak) per step_s bucket."""
+    if not source or not Path(source).is_file():
+        return [], [], 0.0
+    meta = _cache_load(video_id) if video_id else {}
+    if "energy" in meta:
+        e = meta["energy"]
+        return e["times"], e["rms"], e.get("peak", 0.0)
+    c = cfg.get_config()
+    ffmpeg = c.ffmpeg or "ffmpeg"
+    wav = extract_wav(Path(source), None, ffmpeg)
+    times: list[float] = []
+    rms_n: list[float] = []
+    peak = 0.0
+    if wav:
+        rms, sr = rms_profile(wav, step_s)
+        peak = float(rms.max()) if len(rms) else 0.0
+        rms_n = ((rms - rms.min()) / (peak - rms.min())).tolist() if peak > 0 else rms.tolist()
+        times = [round(i * step_s, 3) for i in range(len(rms_n))]
+    if video_id:
+        meta["energy"] = {"step": step_s, "times": times, "rms": rms_n, "peak": peak}
+        _cache_save(video_id, meta)
+    return times, rms_n, peak
+
+
 # --- speech path ------------------------------------------------------------
 def transcribe(video: Path, model_name: str, compute_type: str) -> list[Word]:
     from faster_whisper import WhisperModel
@@ -190,20 +285,24 @@ def _smooth(arr: np.ndarray, k: int = 3) -> np.ndarray:
 
 def visual_windows(video: Path, ffmpeg: str, duration_s: float,
                    window_s: float, step_s: float, min_gap: float,
-                   top_k: int) -> list[Window]:
-    scene_starts = detect_scenes(video)
-    wav = extract_wav(video, None, ffmpeg)
-    if wav:
-        rms, _sr = rms_profile(wav, step_s)
-        rms = _smooth(rms, k=3)
+                   top_k: int, scene_starts: list[float] | None = None,
+                   rms_n: np.ndarray | None = None) -> list[Window]:
+    if scene_starts is None:
+        scene_starts = detect_scenes(video)
+    if rms_n is not None and len(rms_n) > 0:
+        rms_n = np.asarray(rms_n, dtype="float32")
     else:
-        rms = np.zeros(max(1, int(duration_s / step_s)), dtype="float32")
+        wav = extract_wav(video, None, ffmpeg)
+        if wav:
+            rms, _sr = rms_profile(wav, step_s)
+            rms = _smooth(rms, k=3)
+        else:
+            rms = np.zeros(max(1, int(duration_s / step_s)), dtype="float32")
+        rms_n = ((rms - rms.min()) / (rms.max() - rms.min())) if float(rms.max()) > 0 else rms
 
-    n = len(rms)
-    if rms.max() > 0:
-        rms_n = (rms - rms.min()) / (rms.max() - rms.min())
-    else:
-        rms_n = rms
+    n = len(rms_n)
+    if n == 0:
+        return []
     # scene-change density per step bucket
     density = np.zeros(n, dtype="float32")
     for s in scene_starts:
@@ -233,7 +332,7 @@ def visual_windows(video: Path, ffmpeg: str, duration_s: float,
 
 
 # --- orchestrator -----------------------------------------------------------
-def analyze(video: Path, topic: str, mode: str) -> Analysis:
+def analyze(video: Path, topic: str, mode: str, video_id: str | None = None) -> Analysis:
     c = cfg.get_config()
     ffprobe = c.ffprobe
     ffmpeg = c.ffmpeg or "ffmpeg"
@@ -246,8 +345,7 @@ def analyze(video: Path, topic: str, mode: str) -> Analysis:
     words: list[Word] = []
     use_mode = mode
     if mode in ("speech", "auto"):
-        words = transcribe(video, str(c.get("whisper.model", "small")),
-                           str(c.get("whisper.compute_type", "int8")))
+        words = ensure_words(video_id, video)
         min_words = int(a.get("min_words_for_speech", 50))
         if len(words) < min_words:
             if mode == "auto":
@@ -257,11 +355,14 @@ def analyze(video: Path, topic: str, mode: str) -> Analysis:
                 use_mode = "speech"
 
     if use_mode == "visual":
+        step = float(a.get("visual_peak_step_s", 0.5))
+        scenes = ensure_scenes(video_id, video) or detect_scenes(video)
+        times, rms_list, _ = ensure_energy(video_id, video, step)
         windows = visual_windows(
-            video, ffmpeg, duration_s, window_s,
-            float(a.get("visual_peak_step_s", 0.5)),
+            video, ffmpeg, duration_s, window_s, step,
             float(a.get("visual_min_gap_s", 90)),
             int(a.get("visual_candidates", 6)),
+            scene_starts=scenes, rms_n=np.asarray(rms_list or [], dtype="float32"),
         )
         return Analysis("visual", duration_s, words, windows)
 

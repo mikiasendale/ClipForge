@@ -35,7 +35,7 @@ def test_clips_today_counting(home):
     cid = db.add_channel("UC1", "C", "football", None, None, None, None, None, dbp)
     db.insert_video("v", cid, "T", 300, 1, None, dbp)
     assert db.clips_today(dbp) == 0
-    db.add_clip("v", 1, 30, "p", "cap", "ai", "default", dbp)
+    db.add_clip("v", 1, 30, "p", "cap", "ai", "default", engine="single_shot", db_path=dbp)
     assert db.clips_today(dbp) == 1
 
 

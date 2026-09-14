@@ -16,7 +16,14 @@ from app import db
 
 @pytest.fixture()
 def home(tmp_path, monkeypatch):
-    """Point all project paths at tmp_path and init a fresh DB."""
+    """Point all project paths at tmp_path and init a fresh DB.
+
+    Also clears any ambient OPENROUTER_API_KEY so single-shot tests stay
+    deterministic regardless of the developer's local .env; agent tests inject
+    their own fake transport.
+    """
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    cfg._config = None  # drop any cached config carrying a real key
     data = tmp_path / "data"
     for name in ("downloads", "output", "logs", "frames"):
         (data / name).mkdir(parents=True, exist_ok=True)

@@ -60,16 +60,41 @@ def _log(record: dict[str, Any]) -> None:
 # --- OpenRouter transport (monkeypatched in tests) --------------------------
 def call_openrouter(messages: list[dict], model: str) -> tuple[str, dict, float]:
     """Return (assistant_text, usage, latency_ms). Raises on hard failure."""
+    data, latency = _post_chat(messages, model)
+    usage = data.get("usage", {}) or {}
+    text = data["choices"][0]["message"]["content"]
+    return text, usage, latency
+
+
+def call_openrouter_tools(messages: list[dict], tools: list[dict],
+                          model: str) -> tuple[dict, dict, float]:
+    """Tool-calling variant: return (assistant_message_dict, usage, latency_ms).
+
+    assistant_message_dict is the raw choice.message, i.e. {role, content,
+    tool_calls?}. Raises on any transport/HTTP error.
+    """
+    data, latency = _post_chat(messages, model, tools=tools, tool_choice="auto")
+    usage = data.get("usage", {}) or {}
+    message = data["choices"][0]["message"]
+    return message, usage, latency
+
+
+def _post_chat(messages: list[dict], model: str,
+               tools: list[dict] | None = None,
+               tool_choice: str | None = None) -> tuple[dict, float]:
     c = cfg.get_config()
     key = c.openrouter_api_key
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY not set")
     base = c.get("openrouter.base_url", "https://openrouter.ai/api/v1")
-    body = {
+    body: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "temperature": float(c.get("openrouter.temperature", 0.3)),
     }
+    if tools:
+        body["tools"] = tools
+        body["tool_choice"] = tool_choice or "auto"
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
@@ -81,10 +106,7 @@ def call_openrouter(messages: list[dict], model: str) -> tuple[str, dict, float]
                          timeout=float(c.get("openrouter.timeout_s", 120)))
     latency = (time.time() - t0) * 1000.0
     resp.raise_for_status()
-    data = resp.json()
-    usage = data.get("usage", {}) or {}
-    text = data["choices"][0]["message"]["content"]
-    return text, usage, latency
+    return resp.json(), latency
 
 
 # --- JSON extraction + validation ------------------------------------------

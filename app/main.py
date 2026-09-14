@@ -8,6 +8,7 @@ Crash-safety comes from the DB, not from here (see job.py / db.py).
 from __future__ import annotations
 
 import json
+import mimetypes
 import threading
 import time
 from collections import deque
@@ -15,12 +16,12 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Form, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import config as cfg
-from . import db, discovery, job as jobmod, prompts, selector
+from . import db, discovery, job as jobmod, prompts, selector, downloader, analyzer, cutter
 
 APP_DIR = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(APP_DIR / "templates"))
@@ -257,14 +258,182 @@ def run_status():
 
 
 @app.get("/clips", response_class=HTMLResponse)
+@app.get("/review", response_class=HTMLResponse)
 def clips(request: Request):
-    rows = [dict(r) for r in db.all_clips()]
+    """Gallery grouped by day + in-place review editor (feature C)."""
+    rows = [dict(r) for r in db.current_clips()]
+    vsrc = {}
+    for r in rows:
+        vid = r["video_id"]
+        if vid not in vsrc:
+            vsrc[vid] = downloader.resolve_source(vid) is not None
+        r["has_source"] = vsrc[vid]
+        r["duration_url"] = f"/media/source/{vid}"
+    # videos eligible for a brand-new manual clip
+    eligible = [dict(v) for v in db.query(
+        "SELECT video_id, title, duration_s FROM videos "
+        "WHERE status IN ('done','analyzed') ORDER BY used_at DESC LIMIT 200")]
+    for v in eligible:
+        v["has_source"] = downloader.resolve_source(v["video_id"]) is not None
     groups: dict[str, list[dict]] = {}
     for r in rows:
         day = (r.get("created_at") or "")[:10]
         groups.setdefault(day, []).append(r)
     return TEMPLATES.TemplateResponse(request, "clips.html", base_ctx(
-        request, groups=groups, total=len(rows), active="clips"))
+        request, groups=groups, total=len(rows), eligible=eligible,
+        clip_max=int(cfg.get_config().get("clip.length_s", 60)), active="clips"))
+
+
+# --- review media + manual clips (feature C) -------------------------------
+def _parse_range(header: str | None, total: int) -> tuple[int, int] | None:
+    """Parse a single 'bytes=a-b' / 'bytes=a-' / 'bytes=-n' range. None = full."""
+    if not header or not header.strip().lower().startswith("bytes="):
+        return None
+    spec = header[6:].split(",")[0].strip()
+    if "-" not in spec:
+        return None
+    s, _, e = spec.partition("-")
+    try:
+        if s == "" and e == "":
+            return None
+        if s == "":                      # suffix: last n bytes
+            n = int(e)
+            start, end = max(0, total - n), total - 1
+        else:
+            start = int(s)
+            end = int(e) if e else total - 1
+    except ValueError:
+        return None
+    end = min(end, total - 1)
+    if start < 0 or start > end or start >= total:
+        raise HTTPException(status_code=416, detail="range not satisfiable")
+    return start, end
+
+
+def _stream_file(path: Path, start: int, end: int):
+    chunk = 64 * 1024
+    with path.open("rb") as fh:
+        fh.seek(start)
+        remaining = end - start + 1
+        while remaining > 0:
+            data = fh.read(min(chunk, remaining))
+            if not data:
+                break
+            remaining -= len(data)
+            yield data
+
+
+@app.get("/media/source/{video_id}")
+def media_source(video_id: str, request: Request):
+    """Stream the downloaded source with manual HTTP Range (206) so seeking works."""
+    src = downloader.resolve_source(video_id)
+    if not src or not src.is_file():
+        raise HTTPException(status_code=404, detail="source not downloaded")
+    total = src.stat().st_size
+    ctype = mimetypes.guess_type(str(src))[0] or "video/mp4"
+    rng = _parse_range(request.headers.get("range"), total)
+    if rng is None:
+        headers = {"Accept-Ranges": "bytes", "Content-Length": str(total)}
+        return StreamingResponse(_stream_file(src, 0, total - 1),
+                                 media_type=ctype, headers=headers)
+    start, end = rng
+    length = end - start + 1
+    headers = {"Accept-Ranges": "bytes",
+               "Content-Range": f"bytes {start}-{end}/{total}",
+               "Content-Length": str(length)}
+    return StreamingResponse(_stream_file(src, start, end),
+                             status_code=206, media_type=ctype, headers=headers)
+
+
+@app.get("/api/videos")
+def api_videos():
+    """Videos a manual clip can be cut from (status done/analyzed with a source)."""
+    rows = db.query("SELECT video_id, title, duration_s, status FROM videos "
+                    "WHERE status IN ('done','analyzed') ORDER BY used_at DESC LIMIT 200")
+    out = []
+    for r in rows:
+        if downloader.resolve_source(r["video_id"]):
+            out.append({"video_id": r["video_id"], "title": r["title"],
+                        "duration_s": r["duration_s"], "status": r["status"]})
+    return JSONResponse({"videos": out})
+
+
+def _overlaps_any(video_id: str, s: float, e: float, exclude_id: int | None) -> bool:
+    for r in db.video_clips_active(video_id, exclude_id):
+        os_, oe = float(r["start_s"]), float(r["end_s"])
+        if not (e <= os_ or s >= oe):
+            return True
+    return False
+
+
+@app.post("/api/clips")
+async def api_create_clip(request: Request):
+    """Create or revise a clip by re-rendering a window of its source (feature C)."""
+    if not cfg.get_config().ffmpeg:
+        raise HTTPException(status_code=503, detail="ffmpeg unavailable")
+    body = await request.json()
+    video_id = str(body.get("video_id") or "")
+    try:
+        s = round(float(body.get("start_s")), 2)
+        e = round(float(body.get("end_s")), 2)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="start_s/end_s required")
+    caption = str(body.get("caption") or "")[:150]
+    hook = str(body.get("hook_title") or "")[:40]
+    mode = (body.get("mode") or "new").lower()
+    clip_id = body.get("clip_id")
+    clip_id = int(clip_id) if clip_id not in (None, "", "null") else None
+
+    vrow = db.query_one("SELECT * FROM videos WHERE video_id=?", (video_id,))
+    if not vrow:
+        raise HTTPException(status_code=404, detail="unknown video_id")
+    dur = float(vrow["duration_s"] or 0) or 0
+    errors = []
+    if e - s < 5:
+        errors.append("clip must be at least 5s")
+    if e - s > 60:
+        errors.append("clip must be at most 60s")
+    if s < 0 or (dur and e > dur + 0.5):
+        errors.append("window outside video bounds")
+    if _overlaps_any(video_id, s, e, clip_id if mode == "replace" else None):
+        errors.append("overlaps another clip of this video")
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+
+    src = downloader.resolve_source(video_id)
+    if not src:
+        raise HTTPException(status_code=404, detail="source file missing; re-download first")
+    # reuse the cached transcript only — never transcribe synchronously (stays <30s)
+    words = analyzer.cached_words(video_id)
+
+    out = cutter.review_path_for(video_id)
+    path = cutter.render_clip(src, s, e, out, words=words)
+    if not path:
+        raise HTTPException(status_code=500, detail="render failed")
+
+    if mode == "replace" and clip_id and db.get_clip(clip_id):
+        db.mark_clip_revised(clip_id)
+        engine, parent = "review", clip_id
+    else:
+        engine, parent = "manual", None
+
+    new_id = db.add_clip(video_id, s, e, str(path), caption, engine, "user",
+                         engine=engine, parent_clip_id=parent, hook_title=hook)
+    row = db.get_clip(new_id)
+    log_line = f"review: video {video_id} {s:.1f}-{e:.1f}s [{engine}]"
+    (cfg.LOGS_DIR / "review.log").open("a", encoding="utf-8").write(
+        f"{datetime.now().isoformat(timespec='seconds')} {log_line}\n")
+    return JSONResponse({"clip": {k: row[k] for k in row.keys()},
+                         "url": _outurl(str(row["path"])), "engine": engine})
+
+
+def _agent_ctx(c) -> dict:
+    return {
+        "enabled": bool(c.get("agent.enabled", True)),
+        "model": c.get("agent.model", "google/gemini-2.5-flash"),
+        "max_steps": int(c.get("agent.max_steps", 8)),
+        "vision_enabled": bool(c.get("agent.vision_enabled", False)),
+    }
 
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -277,6 +446,7 @@ def settings(request: Request):
         whisper_model=c.get("whisper.model"),
         clip_length=c.get("clip.length_s", 60),
         face_tracking=c.get("clip.face_tracking"),
+        agent=_agent_ctx(c),
         has_key=bool(c.openrouter_api_key),
         test_result=None,
         active="settings"))
@@ -289,14 +459,20 @@ def settings_save(
     whisper_model: str = Form(...), daily_quota: str = Form("4"),
     clip_length: str = Form("60"), face_tracking: str = Form("auto"),
     default_prompt: str = Form(""),
+    agent_model: str = Form("google/gemini-2.5-flash"),
+    agent_enabled: str = Form("off"), agent_vision: str = Form("off"),
 ):
     _persist_settings(text_model, vision_model, whisper_model, daily_quota,
-                      clip_length, face_tracking, default_prompt)
+                      clip_length, face_tracking, default_prompt,
+                      agent_model=agent_model, agent_enabled=agent_enabled,
+                      agent_vision=agent_vision)
+    c = cfg.get_config()
     return TEMPLATES.TemplateResponse(request, "settings.html", base_ctx(
-        request, cfg_models={"text": text_model, "vision": vision_model},
-        whisper_model=whisper_model, face_tracking=face_tracking,
-        clip_length=clip_length,
-        has_key=bool(cfg.get_config().openrouter_api_key),
+        request, cfg_models={"text": c.get("openrouter.models.text"),
+                             "vision": c.get("openrouter.models.vision")},
+        whisper_model=c.get("whisper.model"), face_tracking=c.get("clip.face_tracking"),
+        clip_length=c.get("clip.length_s"), agent=_agent_ctx(c),
+        has_key=bool(c.openrouter_api_key),
         test_result="Settings saved.", active="settings"))
 
 
@@ -308,13 +484,17 @@ def settings_test_key():
 
 
 def _persist_settings(text_model, vision_model, whisper_model, daily_quota,
-                      clip_length, face_tracking, default_prompt) -> None:
-    """Write model/quota/clip/prompt overrides into the DB state layer (spec §11.8).
+                      clip_length, face_tracking, default_prompt,
+                      agent_model="google/gemini-2.5-flash", agent_enabled="on",
+                      agent_vision="") -> None:
+    """Write model/quota/clip/prompt/agent overrides into config + DB state (§11.8).
 
     config.yaml stays the source of defaults; runtime overrides win at read time
-    via cfg.get_config().raw overlays stored in state.
+    and persist across restarts via the state table.
     """
     c = cfg.get_config()
+    enabled = "on" if (agent_enabled in ("on", "true", "1")) else "off"
+    vision = "on" if (agent_vision in ("on", "true", "1")) else "off"
     c.raw.setdefault("openrouter", {}).setdefault("models", {})
     c.raw["openrouter"]["models"]["text"] = text_model
     c.raw["openrouter"]["models"]["vision"] = vision_model
@@ -322,13 +502,23 @@ def _persist_settings(text_model, vision_model, whisper_model, daily_quota,
     c.raw.setdefault("job", {})["daily_quota"] = int(float(daily_quota or 4))
     c.raw.setdefault("clip", {})["length_s"] = int(float(clip_length or 60))
     c.raw["clip"]["face_tracking"] = "off" if face_tracking == "off" else "auto"
-    # persist to state so overrides survive a restart
-    db.set_state("ov.openrouter.models.text", text_model)
-    db.set_state("ov.openrouter.models.vision", vision_model)
-    db.set_state("ov.whisper.model", whisper_model)
-    db.set_state("ov.job.daily_quota", str(int(float(daily_quota or 4))))
-    db.set_state("ov.clip.length_s", str(int(float(clip_length or 60))))
-    db.set_state("ov.clip.face_tracking", "off" if face_tracking == "off" else "auto")
+    ag = c.raw.setdefault("agent", {})
+    ag["model"] = agent_model or "google/gemini-2.5-flash"
+    ag["enabled"] = enabled == "on"
+    ag["vision_enabled"] = vision == "on"
+    overrides = {
+        "ov.openrouter.models.text": text_model,
+        "ov.openrouter.models.vision": vision_model,
+        "ov.whisper.model": whisper_model,
+        "ov.job.daily_quota": str(int(float(daily_quota or 4))),
+        "ov.clip.length_s": str(int(float(clip_length or 60))),
+        "ov.clip.face_tracking": "off" if face_tracking == "off" else "auto",
+        "ov.agent.model": ag["model"],
+        "ov.agent.enabled": "true" if ag["enabled"] else "false",
+        "ov.agent.vision_enabled": "true" if ag["vision_enabled"] else "false",
+    }
+    for k, v in overrides.items():
+        db.set_state(k, str(v))
     if default_prompt.strip() and default_prompt.strip() != prompts.DEFAULT_PROMPT:
         db.set_state("default_prompt", default_prompt.strip())
     else:
@@ -345,6 +535,9 @@ def apply_state_overlays() -> None:
         "ov.job.daily_quota": ["job", "daily_quota"],
         "ov.clip.length_s": ["clip", "length_s"],
         "ov.clip.face_tracking": ["clip", "face_tracking"],
+        "ov.agent.model": ["agent", "model"],
+        "ov.agent.enabled": ["agent", "enabled"],
+        "ov.agent.vision_enabled": ["agent", "vision_enabled"],
     }
     for key, path in mapping.items():
         val = db.get_state(key)
@@ -353,13 +546,16 @@ def apply_state_overlays() -> None:
         node = c.raw
         for p in path[:-1]:
             node = node.setdefault(p, {})
-        if path[-1] in ("daily_quota", "length_s"):
+        last = path[-1]
+        if last in ("daily_quota", "length_s"):
             try:
-                node[path[-1]] = int(float(val))
+                node[last] = int(float(val))
             except (TypeError, ValueError):
                 pass
+        elif last in ("enabled", "vision_enabled"):
+            node[last] = val in ("true", "1", "on", "True")
         else:
-            node[path[-1]] = val
+            node[last] = val
 
 
 apply_state_overlays()

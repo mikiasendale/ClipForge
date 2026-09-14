@@ -40,6 +40,16 @@
     <label>Default editor prompt <span class="muted">(use {N} for the required clip count)</span></label>
     <textarea name="default_prompt" rows="6">{{ default_prompt }}</textarea>
   </div>
+  <fieldset class="agent-set">
+    <legend>Editor agent</legend>
+    <label class="check"><input type="checkbox" name="agent_enabled" value="on" {{ 'checked' if agent.enabled }}> Use tool-calling agent (falls back to single-shot)</label>
+    <div class="field">
+      <label>Agent model <span class="muted">(any tool-capable OpenRouter model; text-only fine)</span></label>
+      <input name="agent_model" value="{{ agent.model }}">
+    </div>
+    <label class="check"><input type="checkbox" name="agent_vision" value="on" {{ 'checked' if agent.vision_enabled }}> Enable vision tool (get_keyframes — needs a vision model)</label>
+    <p class="muted small">Max loop steps: {{ agent.max_steps }} (set in <code>config.yaml</code>)</p>
+  </fieldset>
   <div class="actions">
     <button class="primary" type="submit">Save settings</button>
     <button id="test-key" class="ghost" type="button">Test OpenRouter key</button>

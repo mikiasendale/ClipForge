@@ -23,6 +23,9 @@ data/downloads/
 data/output/
 data/logs/
 data/frames/
+data/transcripts/
+data/hf/
+data/cache/
 data/*.tmp
 
 # Tools (downloaded ffmpeg etc.)

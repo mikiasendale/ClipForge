@@ -24,7 +24,7 @@ def wired(home, monkeypatch, synth_720p):
                  "views": 5000, "upload_date": "20200101"}]
     monkeypatch.setattr(selector, "list_channel_videos", fake_list)
     monkeypatch.setattr(downloader, "download", lambda *a, **k: synth_720p)
-    monkeypatch.setattr(analyzer, "analyze", lambda path, topic, mode:
+    monkeypatch.setattr(analyzer, "analyze", lambda path, topic, mode, video_id=None:
         Analysis("speech", 600.0, [Word(1 + i, 1.5 + i, "goal") for i in range(300)],
                  [Window(2, 6, 1)]))
     def fake_openrouter(messages, model):

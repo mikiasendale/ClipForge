@@ -1,7 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Clips · ClipForge{% endblock %}
+{% block title %}Review · ClipForge{% endblock %}
 {% block content %}
-<h1>Clips <span class="muted">({{ total }})</span></h1>
+<div class="dash-head">
+  <div><h1>Clips &amp; review <span class="muted">({{ total }})</span></h1></div>
+  <button id="btn-new" class="primary" {{ 'disabled' if not eligible }}>+ New clip from source</button>
+</div>
+<p class="muted">Adjust any clip's in/out points and caption over its source video, then re-render in seconds. Superseded versions are hidden.</p>
+
 {% if not groups %}
   <p class="muted">No clips yet. Run the daily job from the dashboard.</p>
 {% endif %}
@@ -10,20 +15,168 @@
     <h2>{{ day }} <span class="muted">· {{ items|length }}</span></h2>
     <div class="clip-grid">
       {% for c in items %}
-      <figure class="clip">
+      <figure class="clip" data-clip='{{ {"id":c.id,"video_id":c.video_id,"start_s":c.start_s,"end_s":c.end_s,"caption":c.caption,"hook_title":c.hook_title,"duration_url":c.duration_url,"has_source":c.has_source,"duration_s":0}|tojson }}'>
         <video controls preload="metadata" src="{{ c.path|outurl }}"></video>
         <figcaption>
+          {% if c.hook_title %}<div class="hook">{{ c.hook_title }}</div>{% endif %}
           <div class="cap">{{ c.caption or '—' }}</div>
           <div class="clipmeta muted">
             {{ (c.end_s - c.start_s)|round|int }}s @ {{ c.start_s|round|int }}s ·
             <span class="tag {{ c.prompt_source }}">{{ c.prompt_source }}</span> ·
-            {{ c.model or '—' }}
+            <span class="eng {{ c.engine }}">{{ c.engine }}</span>
           </div>
-          <div class="clippath muted">{{ c.path|relpath }}</div>
+          <div class="clip-row">
+            <button class="adjust ghost sm-btn" {{ 'disabled' if not c.has_source }}>✎ Adjust</button>
+            <span class="clippath muted">{{ c.path|relpath }}</span>
+          </div>
         </figcaption>
       </figure>
       {% endfor %}
     </div>
   </section>
 {% endfor %}
+
+<!-- review / edit modal -->
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3 id="modal-title">Adjust clip</h3>
+      <button id="modal-x" class="ghost">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="preview">
+        <video id="src-video" controls preload="metadata"></video>
+        <div class="ruler">
+          <div class="in-mark" id="in-mark"></div>
+          <div class="out-mark" id="out-mark"></div>
+        </div>
+        <div class="sliders">
+          <label>IN <input id="in-range" type="range" min="0" max="100" step="0.1" value="0"></label>
+          <label>OUT <input id="out-range" type="range" min="0" max="100" step="0.1" value="5"></label>
+        </div>
+        <div class="timecodes">
+          <span id="tc-in">00:00.0</span>
+          <span id="tc-len">0.0s</span>
+          <span id="tc-out">00:00.0</span>
+        </div>
+        <div id="modal-error" class="modal-error"></div>
+      </div>
+      <div class="fields">
+        <div class="field"><label>Hook title <span class="muted">(≤40)</span></label>
+          <input id="f-hook" maxlength="40" type="text"></div>
+        <div class="field"><label>Caption <span class="muted">(≤150)</span></label>
+          <textarea id="f-cap" maxlength="150" rows="3"></textarea>
+          <span class="counter" id="cap-count">0/150</span></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span id="modal-status" class="muted"></span>
+      <button id="modal-save" class="primary" disabled>Render &amp; save</button>
+    </div>
+  </div>
+</div>
+
+<script type="application/json" id="eligible-json">{{ eligible|tojson }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  const CLIP_MAX = {{ clip_max }};
+  const $ = s => document.querySelector(s);
+  const modal = $('#modal');
+  let state = {};   // {video_id, clip_id, mode, duration}
+
+  const inR = $('#in-range'), outR = $('#out-range'), vid = $('#src-video');
+  const tcIn = $('#tc-in'), tcOut = $('#tc-out'), tcLen = $('#tc-len');
+  const errEl = $('#modal-error'), saveBtn = $('#modal-save'), statusEl = $('#modal-status');
+  const fCap = $('#f-cap'), fHook = $('#f-hook'), capCount = $('#cap-count');
+
+  function fmt(t){ t=Math.max(0,t); const m=Math.floor(t/60), s=(t%60);
+    return `${String(m).padStart(2,'0')}:${s.toFixed(1).padStart(4,'0')}`; }
+
+  function clampRanges(){
+    if (+inR.value >= +outR.value){ inR.value = Math.max(0, +outR.value - 0.2); }
+  }
+  function updateMarks(){
+    const d = state.duration || 1;
+    $('#in-mark').style.left = (+inR.value / d * 100) + '%';
+    $('#out-mark').style.left = (+outR.value / d * 100) + '%';
+  }
+  function validate(){
+    const s = +inR.value, e = +outR.value, len = e - s;
+    let msg = '';
+    if (len < 5) msg = 'too short: need ≥5s';
+    else if (len > CLIP_MAX) msg = `too long: max ${CLIP_MAX}s`;
+    else if (e - s <= 0) msg = 'OUT must be after IN';
+    errEl.textContent = msg;
+    saveBtn.disabled = !!msg;
+    return !msg;
+  }
+  function refresh(preview){
+    if (+outR.value > (state.duration||+outR.value)) outR.value = state.duration;
+    clampRanges();
+    tcIn.textContent = fmt(+inR.value);
+    tcOut.textContent = fmt(+outR.value);
+    tcLen.textContent = (+outR.value - +inR.value).toFixed(1) + 's';
+    updateMarks(); validate();
+    if (preview){ try{ vid.currentTime = +inR.value; }catch(e){} }
+  }
+
+  function open(d){
+    state = Object.assign({mode:'new', clip_id:null, duration:0}, d);
+    $('#modal-title').textContent = state.mode==='replace' ? 'Adjust clip' : 'New clip from source';
+    modal.classList.remove('hidden');
+    statusEl.textContent = '';
+    fCap.value = d.caption || ''; capCount.textContent = (fCap.value.length)+'/150';
+    fHook.value = d.hook_title || '';
+    if (state.video_id){
+      vid.src = d.duration_url || ('/media/source/'+state.video_id);
+      vid.onloadedmetadata = ()=>{
+        state.duration = vid.duration || d.duration_s || 0;
+        inR.max = outR.max = state.duration;
+        inR.value = d.start_s ?? 0;
+        outR.value = d.end_s ?? Math.min(state.duration, CLIP_MAX);
+        refresh(false);
+      };
+      vid.onerror = ()=>{ errEl.textContent = 'source not downloadable'; saveBtn.disabled = true; };
+      vid.load();
+    }
+  }
+  function close(){ modal.classList.add('hidden'); vid.pause(); vid.removeAttribute('src'); vid.load(); }
+
+  inR.addEventListener('input', ()=>refresh(true));
+  outR.addEventListener('input', ()=>refresh(true));
+  fCap.addEventListener('input', ()=>capCount.textContent = fCap.value.length+'/150');
+  $('#modal-x').onclick = close;
+  modal.addEventListener('click', e=>{ if(e.target===modal) close(); });
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape') close(); });
+
+  document.querySelectorAll('.clip .adjust').forEach(btn=>btn.addEventListener('click', ()=>{
+    const d = JSON.parse(btn.closest('.clip').dataset.clip);
+    open(Object.assign({mode:'replace', clip_id:d.id}, d));
+  }));
+
+  document.getElementById('btn-new').addEventListener('click', async ()=>{
+    let vids = JSON.parse(document.getElementById('eligible-json').textContent);
+    if (vids.length === 1){ open({mode:'new', video_id:vids[0].video_id, duration_s:vids[0].duration_s}); return; }
+    const pick = prompt('video_id for new clip:\n' + vids.map(v=>v.video_id+' — '+(v.title||'').slice(0,40)).join('\n'));
+    if (!pick) return;
+    const v = vids.find(x=>x.video_id===pick.trim());
+    if (!v){ alert('not found'); return; }
+    open({mode:'new', video_id:v.video_id, duration_s:v.duration_s});
+  });
+
+  saveBtn.addEventListener('click', async ()=>{
+    if (!validate()) return;
+    saveBtn.disabled = true; statusEl.textContent = 'Rendering…';
+    const body = {video_id: state.video_id, start_s:+inR.value, end_s:+outR.value,
+                  caption:fCap.value, hook_title:fHook.value, mode: state.mode, clip_id: state.clip_id};
+    const r = await fetch('/api/clips', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    if (r.status === 400){ statusEl.textContent=''; errEl.textContent=(await r.json()).detail; saveBtn.disabled=false; return; }
+    if (!r.ok){ statusEl.textContent='render failed ('+r.status+')'; saveBtn.disabled=false; return; }
+    statusEl.textContent='Saved ✓'; setTimeout(()=>location.reload(), 700);
+  });
+})();
+</script>
 {% endblock %}

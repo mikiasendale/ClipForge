@@ -26,15 +26,22 @@ DOWNLOADS_DIR = DATA_DIR / "downloads"
 OUTPUT_DIR = DATA_DIR / "output"
 LOGS_DIR = DATA_DIR / "logs"
 FRAMES_DIR = DATA_DIR / "frames"
+TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
 DB_PATH = DATA_DIR / "clipforge.db"
 TOOLS_DIR = PROJECT_ROOT / "tools"
 
-_DIRS = [DATA_DIR, DOWNLOADS_DIR, OUTPUT_DIR, LOGS_DIR, FRAMES_DIR]
+_DIRS = [DATA_DIR, DOWNLOADS_DIR, OUTPUT_DIR, LOGS_DIR, FRAMES_DIR, TRANSCRIPTS_DIR]
+_HF_CACHE = DATA_DIR / "hf"
 
 
 def ensure_dirs() -> None:
     for d in _DIRS:
         d.mkdir(parents=True, exist_ok=True)
+    # Keep whisper/HuggingFace model downloads inside the project so they never
+    # fill or collide with the user's home cache (gitignored under data/).
+    os.environ.setdefault("HF_HOME", str(_HF_CACHE))
+    os.environ.setdefault("HF_HUB_CACHE", str(_HF_CACHE / "hub"))
+    os.environ.setdefault("XDG_CACHE_HOME", str(DATA_DIR / "cache"))
 
 
 # --- Minimal .env parser (no dependency) ------------------------------------
@@ -82,6 +89,13 @@ class Config:
     @property
     def raw(self) -> dict[str, Any]:
         return self._raw
+
+    # topic helpers -----------------------------------------------------
+    def topic_cfg(self, topic_key: str) -> dict[str, Any]:
+        return (self.get("discovery.topics", {}) or {}).get(topic_key, {}) or {}
+
+    def topic_mode(self, topic_key: str) -> str:
+        return str(self.topic_cfg(topic_key).get("mode", "auto"))
 
     # secrets -----------------------------------------------------------
     @property

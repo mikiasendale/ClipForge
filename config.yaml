@@ -16,6 +16,12 @@ openrouter:
   temperature: 0.3
   timeout_s: 120
 
+agent:
+  enabled: true                       # tool-calling editor loop (falls back to single-shot)
+  model: "google/gemini-2.5-flash"    # any tool-capable OpenRouter model; text-only fine
+  max_steps: 8                        # loop iterations before giving up
+  vision_enabled: false               # expose the get_keyframes tool (needs a vision model)
+
 whisper:
   # faster-whisper model size: tiny | base | small | medium | large-v3
   model: "small"

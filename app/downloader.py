@@ -21,6 +21,20 @@ def _safe_stem(video_id: str) -> str:
     return "".join(ch for ch in video_id if ch.isalnum() or ch in ("-", "_"))[:80] or "video"
 
 
+def resolve_source(video_id: str, dest_dir: Path | None = None) -> Path | None:
+    """Locate an already-downloaded source file for a video id (for review/re-render)."""
+    dest_dir = Path(dest_dir or cfg.DOWNLOADS_DIR)
+    if not dest_dir.exists():
+        return None
+    stem = _safe_stem(video_id)
+    for ext in (".mp4", ".mkv", ".webm", ".mov"):
+        cand = dest_dir / f"{stem}{ext}"
+        if cand.is_file():
+            return cand
+    matches = [f for f in dest_dir.glob(f"{stem}.*") if f.suffix.lower() in (".mp4", ".mkv", ".webm", ".mov")]
+    return matches[0] if matches else None
+
+
 def download(video_id: str, url: str | None = None, dest_dir: Path | None = None) -> Path | None:
     exe = _yt_dlp()
     if not exe:

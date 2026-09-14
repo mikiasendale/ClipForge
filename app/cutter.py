@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -370,6 +371,15 @@ def output_path_for(topic: str, channel: str, title: str, idx: int) -> Path:
     d = cfg.OUTPUT_DIR / day
     d.mkdir(parents=True, exist_ok=True)
     return d / name
+
+
+def review_path_for(video_id: str) -> Path:
+    """Unique output path for a review/re-render (never overwrites the original)."""
+    safe = "".join(ch for ch in video_id if ch.isalnum() or ch in ("-", "_"))[:80]
+    stamp = datetime.now().strftime("%H%M%S") + f"_{int(time.time_ns() % 1000):03d}"
+    d = cfg.OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d")
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"review_{safe}_{stamp}.mp4"
 
 
 def render_clip(src: Path, s: float, e: float, out_path: Path, words=None) -> Path | None:

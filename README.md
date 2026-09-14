@@ -71,11 +71,49 @@ Headless daily job (no UI):
 2. list channel `/videos`, exclude every `video_id` already in the DB, keep
    3–30 min, score by normalized mid-high views, pick the best
 3. download 720p H.264 → `data/downloads/`
-4. analyze → `N = min(4, max(1, round(duration_min/5)))`, clamped to quota remaining
-5. editor AI selects N windows (text path from transcript, or vision path from
-   keyframes for silent clips) → cutter renders → `clips` rows
-6. `used_at` set **only after a successful render**; failed videos get
+4. **select clips** — either the **tool-calling agent** (`app/agent.py`, default)
+   or the single-shot analyzer→editor path (`agent.enabled: false`)
+5. `N = min(4, max(1, round(duration_min/5)))`, clamped to quota remaining
+6. cutter renders each window → `clips` rows
+7. `used_at` set **only after a successful render**; failed videos get
    `status='failed'`
+
+### Editor agent (`app/agent.py`) — feature A
+
+The LLM drives its own analysis instead of a fixed handoff. It calls local tools
+and finishes with the terminal `propose_clips` tool. **Works with text-only
+OpenRouter models** (vision is opt-in via `agent.vision_enabled`).
+
+- **tools**: `get_transcript(chunk_index)` (chunked `[mm:ss]`, ~4000 chars),
+  `get_scene_list()`, `get_audio_energy(start_s,end_s)` (`mm:ss=0.42` lines,
+  >600 s rejected), `get_keyframes(...)` (only if vision enabled),
+  `propose_clips(clips)` — terminal; validated for ≤60 s, ≥2 s from ends,
+  non-overlapping, in-bounds; invalid proposals return errors so the model
+  self-corrects.
+- **system prompt** = `DEFAULT_PROMPT` (+ grounding instruction), override-able.
+- **on-demand whisper**: transcription runs inside `get_transcript` and is cached
+  to `data/transcripts/{video_id}.json` (scenes + audio energy cached too), so
+  re-renders and retries never re-transcribe.
+- **fallback ladder**: API error → retry once → last valid `propose_clips`
+  → the OLD single-shot path (`engine="fallback_single_shot"`). The chosen engine
+  is logged per clip and written to `data/logs/agent_{video_id}.jsonl`.
+
+### Review & edit (`/review`) — feature C
+
+Each finished clip has an **Adjust** editor over the **source** video:
+- `GET /media/source/{video_id}` streams the download with **manual HTTP Range
+  (206/416)** so seeking works.
+- Two range sliders set in/out with live timecodes + preview; save is blocked
+  (inline error) if length <5 s, >60 s, or overlapping another clip of the video.
+- Caption (≤150, live counter) + hook title.
+- **Save** → `POST /api/clips` re-runs the cutter (same face-tracking + caption
+  settings), re-rendering in seconds (never re-transcribes; reuses the cache).
+  `mode:"replace"` marks the old row `revised_at` and links `parent_clip_id`;
+  `mode:"new"` adds a manual clip. Superseded versions are hidden from the
+  gallery; manual clips don't touch `used_at`.
+```yaml
+agent: { enabled: true, model: "google/gemini-2.5-flash", max_steps: 8, vision_enabled: false }
+```
 
 ### Highlight detection (`app/analyzer.py`)
 - **speech/auto**: faster-whisper word timestamps. Sliding 60s windows (step 15s)
@@ -95,16 +133,16 @@ else center crop. ASS captions (uppercase, ≤3 words/line, lower third, white w
 
 ```
 app/  main.py db.py config.py discovery.py selector.py
-      downloader.py analyzer.py editor_ai.py cutter.py prompts.py job.py
+      downloader.py analyzer.py editor_ai.py cutter.py prompts.py job.py agent.py
       templates/ static/
-data/ clipforge.db  downloads/  output/  logs/  frames/   (gitignored)
+data/ clipforge.db  downloads/  output/  logs/  frames/  transcripts/  (gitignored)
 tests/ bootstrap.sh bootstrap.bat run.sh run.bat config.yaml .env.example
 ```
 
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest          # 40 tests (network + whisper mocked; real ffmpeg renders)
+.venv/bin/python -m pytest          # 51 tests (network + whisper + OpenRouter mocked; real ffmpeg renders)
 ```
 
 ---
@@ -121,6 +159,17 @@ tests/ bootstrap.sh bootstrap.bat run.sh run.bat config.yaml .env.example
 | 6 | Custom run with a prompt override | new clip rows have `prompt_source='user'` |
 | 7 | Kill the server mid-job, restart, run again | **no duplicate** videos or clips (`used_at` set only after render) |
 | 8 | Edit `config.yaml` (e.g. model name) | reflected without code changes |
+
+### Agent + review (features A / C)
+
+| # | Step | Expected |
+|---|------|----------|
+| A1 | `agent.enabled=true`, text-only model, ~10-min video | 2 clips ≤61s; `data/logs/agent_*.jsonl` shows ≥1 tool call before `propose_clips` |
+| A2 | `agent.model` = nonexistent model | run completes via fallback; log says `fallback_single_shot` |
+| A3 | `propose_clips` with overlapping windows | model gets a validation error and self-corrects, or falls back — never renders invalid clips |
+| C1 | `GET /media/source/{id}` with a `Range` header | **206** + correct `Content-Range`; seeking works in Chromium |
+| C2 | Adjust a clip's out-point, save | new file rendered; old row `revised_at` set; gallery shows the new version only |
+| C3 | Create a manual clip from a `done` video, >60s | rejected (400); ≤60s accepted, `engine=manual` |
 
 ---
 

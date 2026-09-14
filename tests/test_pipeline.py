@@ -23,7 +23,7 @@ def _stub_download(monkeypatch, src):
 
 
 def _stub_analyze(monkeypatch, analysis):
-    monkeypatch.setattr(analyzer, "analyze", lambda path, topic, mode: analysis)
+    monkeypatch.setattr(analyzer, "analyze", lambda path, topic, mode, video_id=None: analysis)
 
 
 def _stub_editor(monkeypatch, picks_json):

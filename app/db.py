@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS clips (
     caption       TEXT,
     model         TEXT,
     prompt_source TEXT NOT NULL DEFAULT 'default',
+    engine        TEXT NOT NULL DEFAULT 'single_shot',
+    hook_title    TEXT,
+    revised_at    TEXT,
+    parent_clip_id INTEGER REFERENCES clips(id),
     created_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_clips_video ON clips(video_id);
@@ -63,6 +67,15 @@ CREATE TABLE IF NOT EXISTS state (
     value TEXT
 );
 """
+
+
+# Columns added after the initial release; ALTER is idempotent via pragma check.
+_CLIP_MIGRATIONS = [
+    ("engine", "TEXT NOT NULL DEFAULT 'single_shot'"),
+    ("revised_at", "TEXT"),
+    ("parent_clip_id", "INTEGER REFERENCES clips(id)"),
+    ("hook_title", "TEXT"),
+]
 
 
 def now_iso() -> str:
@@ -85,9 +98,18 @@ def init_db(db_path: Path | str | None = None) -> None:
         conn = connect(db_path)
         try:
             conn.executescript(_SCHEMA)
+            _migrate(conn)
             conn.commit()
         finally:
             conn.close()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add clips columns introduced after the baseline, if missing."""
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(clips)").fetchall()}
+    for col, decl in _CLIP_MIGRATIONS:
+        if col not in have:
+            conn.execute(f"ALTER TABLE clips ADD COLUMN {col} {decl}")
 
 
 def query(sql: str, params: Iterable[Any] = (), db_path: Path | str | None = None) -> list[sqlite3.Row]:
@@ -184,17 +206,45 @@ def known_video_ids(db_path: Path | str | None = None) -> set[str]:
 
 # --- clips ------------------------------------------------------------------
 def add_clip(video_id: str, start_s: float, end_s: float, path: str | None, caption: str | None,
-             model: str | None, prompt_source: str, db_path: Path | str | None = None) -> int:
+             model: str | None, prompt_source: str, engine: str = "single_shot",
+             parent_clip_id: int | None = None, hook_title: str | None = None,
+             db_path: Path | str | None = None) -> int:
     return execute(
-        """INSERT INTO clips(video_id, start_s, end_s, path, caption, model, prompt_source, created_at)
-           VALUES(?,?,?,?,?,?,?,?)""",
-        (video_id, start_s, end_s, path, caption, model, prompt_source, now_iso()),
+        """INSERT INTO clips(video_id, start_s, end_s, path, caption, model,
+                             prompt_source, engine, parent_clip_id, hook_title, created_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        (video_id, start_s, end_s, path, caption, model, prompt_source,
+         engine, parent_clip_id, hook_title, now_iso()),
         db_path,
     )
 
 
 def all_clips(db_path: Path | str | None = None) -> list[sqlite3.Row]:
     return query("SELECT * FROM clips ORDER BY created_at DESC", (), db_path)
+
+
+def current_clips(db_path: Path | str | None = None) -> list[sqlite3.Row]:
+    """Unrevised clips only (superseded versions hidden from the gallery)."""
+    return query("SELECT * FROM clips WHERE revised_at IS NULL ORDER BY created_at DESC",
+                 (), db_path)
+
+
+def get_clip(clip_id: int, db_path: Path | str | None = None) -> sqlite3.Row | None:
+    return query_one("SELECT * FROM clips WHERE id=?", (clip_id,), db_path)
+
+
+def video_clips_active(video_id: str, exclude_id: int | None = None,
+                       db_path: Path | str | None = None) -> list[sqlite3.Row]:
+    sql = "SELECT * FROM clips WHERE video_id=? AND revised_at IS NULL"
+    params: list[Any] = [video_id]
+    if exclude_id:
+        sql += " AND id!=?"
+        params.append(exclude_id)
+    return query(sql, params, db_path)
+
+
+def mark_clip_revised(clip_id: int, db_path: Path | str | None = None) -> None:
+    execute("UPDATE clips SET revised_at=? WHERE id=?", (now_iso(), clip_id), db_path)
 
 
 def clips_today(db_path: Path | str | None = None) -> int:

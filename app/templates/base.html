@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ClipForge{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◆</span>
+      <strong>ClipForge</strong>
+      <span class="muted">old-YouTube → TikTok</span>
+    </div>
+    <nav>
+      {% if has_channels %}<a href="/dashboard" class="{{ 'active' if active=='dashboard' }}">Dashboard</a>{% endif %}
+      <a href="/onboarding" class="{{ 'active' if active=='onboarding' }}">Onboarding</a>
+      <a href="/clips" class="{{ 'active' if active=='clips' }}">Clips</a>
+      <a href="/settings" class="{{ 'active' if active=='settings' }}">Settings</a>
+    </nav>
+    <div class="quota-badge">
+      <span class="dot {{ 'full' if clips_today>=quota else '' }}"></span>
+      {{ clips_today }}/{{ quota }} today
+    </div>
+  </header>
+
+  <main class="wrap">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="foot muted">ClipForge · local only · v{{ version }}</footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

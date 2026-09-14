@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Onboarding · ClipForge{% endblock %}
+{% block content %}
+<h1>Pick your channels</h1>
+<div class="onb-toolbar">
+  <p class="muted">Tick exactly the required number of channels per section. Save stays disabled until every quota is met.</p>
+  <div class="onb-actions">
+    <button class="ghost sm-btn" id="btn-refresh">↻ Refresh search</button>
+    <button class="ghost sm-btn" id="btn-deep" title="Scrapling: joined year + real avatar">✦ Deep enrich</button>
+  </div>
+</div>
+
+<div id="onboarding">
+  {% for t in topics %}
+  <section class="topic" data-topic="{{ t.key }}" data-pick="{{ t.pick }}" data-mode="{{ t.mode }}">
+    <div class="topic-head">
+      <div>
+        <h2>{{ t.label }}</h2>
+        <span class="pill {{ t.mode }}">{{ t.mode }}</span>
+      </div>
+      <div class="progress"><span class="count" data-count>0</span> / {{ t.pick }}</div>
+    </div>
+    <div class="cards" data-cards>
+      <div class="loading muted">Loading candidates…</div>
+    </div>
+  </section>
+  {% endfor %}
+</div>
+
+<div class="stickybar">
+  <div id="onb-status" class="muted">Loading…</div>
+  <button id="save-channels" class="primary" disabled>Save &amp; finish</button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  const TOPICS = {{ topics | tojson }};
+  const SAVED = {{ saved | tojson }};
+  const sections = {};
+  document.querySelectorAll('section.topic').forEach(s => sections[s.dataset.topic] = s);
+  const selected = {};   // topic -> {id: candidateObj}
+
+  function cardHTML(ch, topic){
+    const id = String(ch.platform_channel_id);
+    const savedIds = (SAVED[topic]||[]).map(x=>String(x.platform_channel_id));
+    const checked = savedIds.includes(id) ? 'checked' : '';
+    const avatar = ch.avatar_url
+      ? `<img class="avatar" src="${esc(ch.avatar_url)}" loading="lazy" onerror="this.outerHTML='<div class=&quot;avatar ph&quot;>?</div>'">`
+      : `<div class="avatar ph">${esc((ch.title||'?').slice(0,2).toUpperCase())}</div>`;
+    const url = ch.url || ('https://www.youtube.com/channel/'+id);
+    const joined = ch.joined_year ? 'est. '+ch.joined_year : 'year —';
+    return `<label class="card ${checked?'selected':''}" data-id="${esc(id)}">
+      <input type="checkbox" class="pick" data-topic="${topic}" ${checked}>
+      <div class="card-body">${avatar}<div class="meta">
+        <div class="ctitle" title="${esc(ch.title)}">${esc(ch.title)}</div>
+        <div class="csub">${fmt(ch.subs)} subs · ${fmt(ch.video_count)} videos · ${joined}</div>
+        <a class="open" href="${esc(url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">open on YouTube ↗</a>
+      </div></div></label>`;
+  }
+
+  function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function fmt(n){ if(n==null||n==='')return '—'; n=+n||0; return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?Math.round(n/1e3)+'K':''+n; }
+  function cssq(v){ return (window.CSS&&CSS.escape)?CSS.escape(String(v)):String(v).replace(/[^a-zA-Z0-9_-]/g,'\\$&'); }
+
+  function wire(section){
+    section.querySelectorAll('.pick').forEach(cb => cb.addEventListener('change', e=>{
+      const key = e.target.dataset.topic, s = sections[key];
+      const card = e.target.closest('.card');
+      const id = card.dataset.id;
+      const map = (selected[key] ||= {});
+      const want = +s.dataset.pick;
+      if (e.target.checked){
+        if (Object.keys(map).length >= want){
+          // over quota: drop the earliest selection, keep the new one
+          const first = Object.keys(map)[0];
+          if (first !== undefined){
+            delete map[first];
+            const el = s.querySelector(`.card[data-id="${cssq(first)}"]`);
+            if (el){ el.querySelector('.pick').checked = false; el.classList.remove('selected'); }
+          }
+        }
+        const cand = (s._cards||[]).find(c=>String(c.platform_channel_id)===id);
+        map[id] = cand || {platform_channel_id:id};
+        card.classList.add('selected');
+      } else {
+        card.classList.remove('selected');
+        delete map[id];
+      }
+      refresh();
+    }));
+  }
+
+  function refresh(){
+    let total=0, need=0;
+    Object.values(sections).forEach(s=>{
+      const n = Object.keys(selected[s.dataset.topic]||{}).length;
+      s.querySelector('[data-count]').textContent = n;
+      s.classList.toggle('ok', n === +s.dataset.pick);
+      total += n; need += +s.dataset.pick;
+    });
+    document.getElementById('onb-status').textContent = `${total}/${need} selected`;
+    document.getElementById('save-channels').disabled = total !== need;
+  }
+
+  async function loadTopic(key, deep, refreshFlag){
+    const s = sections[key]; const wrap = s.querySelector('[data-cards]');
+    wrap.innerHTML = '<div class="loading muted">Loading candidates…</div>';
+    try{
+      const r = await fetch(`/api/candidates?topic=${key}${refreshFlag?'&refresh=1':''}${deep?'&deep=1':''}`);
+      const d = await r.json();
+      s._cards = d.cards || [];
+      if (!s._cards.length){ wrap.innerHTML = '<div class="empty">No candidates found. Try <b>Refresh search</b>.</div>'; return; }
+      wrap.innerHTML = s._cards.map(c=>cardHTML(c,key)).join('');
+      selected[key] = selected[key] || {};
+      // preselect saved
+      (SAVED[key]||[]).forEach(sv=>{ const sid=String(sv.platform_channel_id); if(s._cards.some(c=>String(c.platform_channel_id)===sid)){
+        const cb = s.querySelector(`.card[data-id="${cssq(sid)}"] .pick`);
+        if (cb){ cb.checked=true; cb.closest('.card').classList.add('selected'); (selected[key] ||= {})[sid]=s._cards.find(c=>String(c.platform_channel_id)===sid); }
+      }});
+      wire(s); refresh();
+    }catch(e){ wrap.innerHTML = '<div class="empty">Search failed. Click <b>Refresh search</b>.</div>'; }
+  }
+
+  document.getElementById('btn-refresh').onclick = ()=> Object.keys(sections).forEach(k=>loadTopic(k,false,true));
+  document.getElementById('btn-deep').onclick = ()=> Object.keys(sections).forEach(k=>loadTopic(k,true,true));
+
+  document.getElementById('save-channels').addEventListener('click', async ()=>{
+    const body = {selected: {}};
+    Object.entries(selected).forEach(([k,map]) => body.selected[k] = Object.values(map));
+    const res = await fetch('/onboarding', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    if (res.status === 400){ document.getElementById('onb-status').textContent = '⚠ ' + (await res.json()).detail; }
+    else { window.location.href = '/dashboard'; }
+  });
+
+  Object.keys(sections).forEach(k=>loadTopic(k, {{ 'true' if deep else 'false' }}, {{ 'true' if deep else 'false' }}));
+  refresh();
+})();
+</script>
+{% endblock %}

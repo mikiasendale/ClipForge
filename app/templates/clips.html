@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Clips · ClipForge{% endblock %}
+{% block content %}
+<h1>Clips <span class="muted">({{ total }})</span></h1>
+{% if not groups %}
+  <p class="muted">No clips yet. Run the daily job from the dashboard.</p>
+{% endif %}
+{% for day, items in groups.items() %}
+  <section class="clip-day">
+    <h2>{{ day }} <span class="muted">· {{ items|length }}</span></h2>
+    <div class="clip-grid">
+      {% for c in items %}
+      <figure class="clip">
+        <video controls preload="metadata" src="{{ c.path|outurl }}"></video>
+        <figcaption>
+          <div class="cap">{{ c.caption or '—' }}</div>
+          <div class="clipmeta muted">
+            {{ (c.end_s - c.start_s)|round|int }}s @ {{ c.start_s|round|int }}s ·
+            <span class="tag {{ c.prompt_source }}">{{ c.prompt_source }}</span> ·
+            {{ c.model or '—' }}
+          </div>
+          <div class="clippath muted">{{ c.path|relpath }}</div>
+        </figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+  </section>
+{% endfor %}
+{% endblock %}

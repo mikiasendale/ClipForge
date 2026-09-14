@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Settings · ClipForge{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<p class="muted">These override <code>config.yaml</code> at runtime and persist across restarts.</p>
+
+{% if test_result %}<div class="toast">{{ test_result }}</div>{% endif %}
+
+<form method="post" action="/settings" class="panel settings">
+  <div class="field">
+    <label>OpenRouter text model</label>
+    <input name="text_model" value="{{ cfg_models.text }}">
+  </div>
+  <div class="field">
+    <label>OpenRouter vision model</label>
+    <input name="vision_model" value="{{ cfg_models.vision }}">
+  </div>
+  <div class="field">
+    <label>Whisper model <span class="muted">(tiny/base/small/medium/large-v3)</span></label>
+    <input name="whisper_model" value="{{ whisper_model }}">
+  </div>
+  <div class="field-row">
+    <div class="field">
+      <label>Daily quota</label>
+      <input name="daily_quota" type="number" min="1" max="20" value="{{ quota }}">
+    </div>
+    <div class="field">
+      <label>Clip length (s)</label>
+      <input name="clip_length" type="number" min="10" max="90" value="{{ clip_length }}">
+    </div>
+    <div class="field">
+      <label>Face tracking</label>
+      <select name="face_tracking">
+        <option value="auto" {{ 'selected' if face_tracking!='off' }}>auto</option>
+        <option value="off" {{ 'selected' if face_tracking=='off' }}>off</option>
+      </select>
+    </div>
+  </div>
+  <div class="field">
+    <label>Default editor prompt <span class="muted">(use {N} for the required clip count)</span></label>
+    <textarea name="default_prompt" rows="6">{{ default_prompt }}</textarea>
+  </div>
+  <div class="actions">
+    <button class="primary" type="submit">Save settings</button>
+    <button id="test-key" class="ghost" type="button">Test OpenRouter key</button>
+    <span id="key-result" class="muted"></span>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('test-key').addEventListener('click', async ()=>{
+  const el = document.getElementById('key-result'); el.textContent = 'testing…';
+  const r = await fetch('/settings/test_key', {method:'POST'});
+  const j = await r.json();
+  el.textContent = j.ok ? ('✓ ' + j.message) : ('✗ ' + j.message);
+  el.className = j.ok ? 'ok' : 'err';
+});
+</script>
+{% endblock %}

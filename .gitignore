@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# Secrets / local env
+.env
+
+# Data (all generated, never committed)
+data/clipforge.db
+data/clipforge.db-wal
+data/clipforge.db-shm
+data/downloads/
+data/output/
+data/logs/
+data/frames/
+data/*.tmp
+
+# Tools (downloaded ffmpeg etc.)
+tools/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# local verification scratch (not part of app)
+.tmp/
+.uvcache/

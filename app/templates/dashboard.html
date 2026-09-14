@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · ClipForge{% endblock %}
+{% block content %}
+<div class="dash-head">
+  <div>
+    <h1>Dashboard</h1>
+    <p class="muted" id="quota-line">{{ clips_today }}/{{ quota }} clips today</p>
+  </div>
+  <div class="run-actions">
+    <button id="btn-run" class="primary">▶ Run daily job</button>
+    <button id="btn-custom" class="ghost">⚙ Run custom…</button>
+  </div>
+</div>
+
+<div id="custom-panel" class="panel hidden">
+  <h3>Custom run</h3>
+  <div class="field">
+    <label>YouTube URL (optional — blank = normal rotation)</label>
+    <input id="custom-url" type="text" placeholder="https://www.youtube.com/watch?v=…">
+  </div>
+  <div class="field">
+    <label>Clip count</label>
+    <input id="custom-count" type="number" min="1" max="8" placeholder="{{ default_count }}">
+  </div>
+  <div class="field">
+    <label>Prompt override</label>
+    <textarea id="custom-prompt" rows="5" placeholder="{{ default_prompt }}"></textarea>
+  </div>
+  <button id="btn-custom-run" class="primary">Start custom</button>
+</div>
+
+<div class="grid-2">
+  <div class="panel">
+    <h3>Picked channels <span class="muted">({{ channels|length }})</span></h3>
+    <div class="chan-grid">
+      {% for ch in channels %}
+      <div class="chan">
+        {% if ch.avatar_url %}<img src="{{ ch.avatar_url }}" class="avatar sm" onerror="this.style.display='none'">{% endif %}
+        <div>
+          <div class="ctitle">{{ ch.title }}</div>
+          <div class="csub"><span class="pill">{{ ch.topic }}</span></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Job log</h3>
+    <div class="logbox" id="logbox"><div class="muted">Idle — no job running.</div></div>
+  </div>
+</div>
+
+{% if not has_key %}
+<div class="warn">No <code>OPENROUTER_API_KEY</code> found in <code>.env</code>. The editor AI will fall back to heuristic windows. Add it in <code>.env</code> then restart.</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  const logbox = document.getElementById('logbox');
+  let lastLen = 0;
+
+  async function poll(){
+    try{
+      const r = await fetch('/run/status'); const s = await r.json();
+      document.getElementById('quota-line').textContent = `${s.clips_today}/${s.quota} clips today` + (s.running ? ' · running' : '');
+      document.getElementById('btn-run').disabled = s.running;
+      document.getElementById('btn-custom-run').disabled = s.running;
+      const lines = s.log || [];
+      logbox.innerHTML = lines.map(l => `<div>${escapeHtml(l)}</div>`).join('') || '<div class="muted">Idle — no job running.</div>';
+      if (s.running) logbox.scrollTop = logbox.scrollHeight;
+    }catch(e){}
+  }
+  function escapeHtml(x){ return (x||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+  setInterval(poll, 2000); poll();
+
+  document.getElementById('btn-run').addEventListener('click', async ()=>{
+    const r = await fetch('/run', {method:'POST'});
+    if (r.status===409) alert('A job is already running.');
+    poll();
+  });
+  document.getElementById('btn-custom').addEventListener('click', ()=>{
+    document.getElementById('custom-panel').classList.toggle('hidden');
+  });
+  document.getElementById('btn-custom-run').addEventListener('click', async ()=>{
+    const body = {
+      url: document.getElementById('custom-url').value,
+      count: document.getElementById('custom-count').value || null,
+      prompt: document.getElementById('custom-prompt').value,
+    };
+    const r = await fetch('/run/custom', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    if (r.status===409) alert('A job is already running.');
+    poll();
+  });
+})();
+</script>
+{% endblock %}

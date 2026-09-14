@@ -1,0 +1,99 @@
+# ClipForge configuration.
+# Every value here is user-editable and read at runtime (no code change needed).
+# Secrets (API keys) live in .env, NOT here.
+
+paths:
+  # ffmpeg / ffprobe. Leave "auto" to search PATH, then ./tools/ffmpeg, then .env FFMPEG_PATH.
+  ffmpeg: "auto"
+  ffprobe: "auto"
+
+openrouter:
+  base_url: "https://openrouter.ai/api/v1"
+  # Referenced as Bearer $OPENROUTER_API_KEY from .env
+  models:
+    text: "google/gemini-2.5-flash"
+    vision: "google/gemini-2.5-flash"
+  temperature: 0.3
+  timeout_s: 120
+
+whisper:
+  # faster-whisper model size: tiny | base | small | medium | large-v3
+  model: "small"
+  # compute type: int8 | float16 | float32 (int8 recommended on CPU)
+  compute_type: "int8"
+
+job:
+  daily_quota: 4          # clips produced per day target
+  max_attempts: 6         # per run, how many channels to try before giving up
+  min_duration_s: 180     # 3 min
+  max_duration_s: 1800    # 30 min
+
+clip:
+  length_s: 60            # max clip length
+  target_width: 1080
+  target_height: 1920
+  fps: 30
+  crf: 20
+  preset: "veryfast"
+  audio_bitrate: "128k"
+  loudnorm_i: -14         # TikTok target loudness (LUFS)
+  # off | auto  (auto = segment-wise face-tracking crop if faces found in >30% samples)
+  face_tracking: "auto"
+  face_min_ratio: 0.30
+  face_chunk_s: 2.0
+  face_smooth_window_s: 3.0
+  caption_font: "Arial Black"
+  caption_fontsize: 54
+  caption_words_per_line: 3
+
+discovery:
+  channel_min_age_years: 3
+  # per-topic search queries (used by yt-dlp ytsearch). User-editable.
+  topics:
+    football:
+      candidates: 10
+      pick: 3
+      mode: speech
+      queries:
+        - "classic soccer match commentary"
+        - "old football highlights commentary"
+        - "retro football analysis"
+    boxing:
+      candidates: 10
+      pick: 3
+      mode: speech
+      queries:
+        - "old boxing analysis"
+        - "classic boxing breakdown"
+        - "vintage boxing channel"
+    cats_silent:
+      label: "Cats / Silent"
+      candidates: 7
+      pick: 2
+      mode: visual
+      queries:
+        - "old cat videos no talking"
+        - "vintage cat video"
+    cats_compilations:
+      label: "Cats / Compilations"
+      candidates: 7
+      pick: 2
+      mode: auto
+      queries:
+        - "funny cat compilation old"
+        - "classic cat compilation"
+  # Rotation order across ALL picked channels (see selector). Cycles forever.
+  rotation_order:
+    - cats_silent
+    - football
+    - boxing
+    - cats_compilations
+
+analyzer:
+  window_s: 60
+  speech_step_s: 15
+  speech_top_candidates: 6
+  visual_peak_step_s: 0.5
+  visual_min_gap_s: 90
+  visual_candidates: 6
+  min_words_for_speech: 50

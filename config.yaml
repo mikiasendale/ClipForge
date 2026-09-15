@@ -52,6 +52,12 @@ clip:
   caption_fontsize: 54
   caption_words_per_line: 3
 
+capcut:
+  # Where CapCut/JianYing drafts live. "auto" detects on Windows
+  # (%LOCALAPPDATA%\JianyingPro|CapCut\User Data\Projects\com.lveditor.draft).
+  # On Linux/macOS there is no auto path — set an explicit folder here.
+  draft_root: "auto"
+
 discovery:
   channel_min_age_years: 3
   # per-topic search queries (used by yt-dlp ytsearch). User-editable.

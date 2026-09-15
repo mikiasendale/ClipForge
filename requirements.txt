@@ -12,6 +12,11 @@ soundfile==0.14.0
 # Web scraping / channel enrichment (StealthyFetcher browser is fetched via `scrapling install`)
 scrapling==0.4.15
 
+# CapCut / JianYing draft export (optional second output mode — feature B).
+# Reverse-engineered format: a CapCut auto-update can break it. mp4 mode is
+# independent of this package; if it's missing the UI disables CapCut mode.
+pyJianYingDraft==0.3.0
+
 # Web app
 fastapi==0.141.1
 uvicorn[standard]==0.53.0

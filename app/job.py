@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import config as cfg
-from . import db, selector, downloader, analyzer, editor_ai, cutter, agent
+from . import db, selector, downloader, analyzer, editor_ai, cutter, agent, capcut_export
 
 LogFn = Callable[[str], None]
 
@@ -40,7 +40,7 @@ def _norm_clips(result) -> list[dict]:
 
 def render_clips(video_id: str, src: Path, clips: list[dict], words, title: str,
                  channel_name: str, topic: str, prompt_source: str, log: LogFn) -> list[str]:
-    """Render each clip dict, insert rows. Returns produced clip paths."""
+    """Render each clip dict to mp4, insert rows. Returns produced clip paths."""
     paths: list[str] = []
     for i, cl in enumerate(clips):
         out = cutter.output_path_for(topic, channel_name, title, i)
@@ -49,13 +49,33 @@ def render_clips(video_id: str, src: Path, clips: list[dict], words, title: str,
             engine = cl.get("engine", "single_shot")
             db.add_clip(video_id, cl["start_s"], cl["end_s"], str(path),
                         cl.get("caption"), engine, prompt_source, engine=engine,
-                        hook_title=cl.get("hook_title"))
+                        hook_title=cl.get("hook_title"), render_mode="mp4")
             log(f"    clip {i + 1}: {cl['start_s']:.0f}-{cl['end_s']:.0f}s "
                 f"[{engine}] -> {path.name}")
             paths.append(str(path))
         else:
             log(f"    clip {i + 1}: render failed")
     return paths
+
+
+def export_clips_draft(video_row: dict, src: Path, clips: list[dict], prompt_source: str,
+                       log: LogFn) -> list[str]:
+    """Write one CapCut draft folder per clip (feature B). Returns draft paths.
+
+    Raises RuntimeError if capcut is disabled or the draft root is unwritable so
+    the caller can fall back to mp4 mode.
+    """
+    results: list[str] = []
+    for i, cl in enumerate(clips):
+        video_row = {**video_row, "_clip_index": i}
+        draft = capcut_export.export_draft(video_row, [cl], src_path=src)
+        engine = cl.get("engine", "single_shot")
+        db.add_clip(video_row["video_id"], cl["start_s"], cl["end_s"], None,
+                    cl.get("caption"), engine, prompt_source, engine=engine,
+                    hook_title=cl.get("hook_title"), render_mode="capcut", draft_path=draft)
+        log(f"    draft {i + 1}: {cl['start_s']:.0f}-{cl['end_s']:.0f}s -> {Path(draft).name}")
+        results.append(draft)
+    return results
 
 
 def _single_shot(video_id: str, channel_row: dict, src: Path, topic: str,
@@ -76,12 +96,18 @@ def _single_shot(video_id: str, channel_row: dict, src: Path, topic: str,
 
 def process_video(video_id: str, channel_row: dict, url: str | None, log: LogFn,
                   force_n: int | None = None,
-                  prompt_override: str | None = None) -> list[str]:
-    """Download -> (agent | single-shot) -> render for one video. Returns clip paths."""
+                  prompt_override: str | None = None,
+                  output_mode: str | None = None) -> list[str]:
+    """Download -> (agent | single-shot) -> render mp4 OR export CapCut draft.
+
+    output_mode: 'mp4' | 'capcut' (default: config/state 'output_mode', else mp4).
+    """
     topic = channel_row["topic"]
     channel_name = channel_row.get("title") or topic
     c = cfg.get_config()
     prompt_source = "user" if prompt_override else "default"
+    if output_mode not in ("mp4", "capcut"):
+        output_mode = db.get_state("output_mode", c.get("capcut.default_mode", "mp4") or "mp4")
 
     log(f"  downloading {video_id} ({channel_name})")
     db.set_video_status(video_id, "pending")
@@ -131,10 +157,21 @@ def process_video(video_id: str, channel_row: dict, url: str | None, log: LogFn,
         db.set_video_status(video_id, "failed")
         return []
 
-    paths = render_clips(video_id, src, clips, words, channel_row.get("title") or "",
-                         channel_name, topic, prompt_source, log)
+    # --- output: mp4 render OR CapCut draft (feature B) ---
+    if output_mode == "capcut":
+        video_row = {"video_id": video_id, "title": channel_row.get("title") or topic,
+                     "duration_s": duration_s, "topic": topic}
+        try:
+            paths = export_clips_draft(video_row, src, clips, prompt_source, log)
+        except Exception as e:
+            log(f"  capcut export failed ({e}); falling back to mp4 render")
+            paths = render_clips(video_id, src, clips, words, channel_row.get("title") or "",
+                                 channel_name, topic, prompt_source, log)
+    else:
+        paths = render_clips(video_id, src, clips, words, channel_row.get("title") or "",
+                             channel_name, topic, prompt_source, log)
     if paths:
-        db.mark_video_used(video_id)   # used_at set ONLY after a successful render
+        db.mark_video_used(video_id)   # used_at set ONLY after a successful render/export
     else:
         db.set_video_status(video_id, "failed")
     return paths
@@ -157,15 +194,15 @@ def ensure_custom_video_row(video_id: str, info: dict) -> dict:
     return dict(row)
 
 
-def daily_job(log: LogFn = _noop) -> list[str]:
-    """The full run-until-quota loop. Returns produced clip paths (for --auto)."""
+def daily_job(log: LogFn = _noop, output_mode: str | None = None) -> list[str]:
+    """The full run-until-quota loop. Returns produced clip/draft paths (for --auto)."""
     c = cfg.get_config()
     quota = int(c.get("job.daily_quota", 4))
     max_attempts = int(c.get("job.max_attempts", 6))
     produced: list[str] = []
     attempts = 0
     tried: set[int] = set()
-    log(f"[run] start — quota={quota}, clips_today={db.clips_today()}")
+    log(f"[run] start — quota={quota}, clips_today={db.clips_today()}, output={output_mode or 'last-used'}")
 
     while db.clips_today() < quota and attempts < max_attempts:
         attempts += 1
@@ -179,7 +216,7 @@ def daily_job(log: LogFn = _noop) -> list[str]:
         if not video:
             log("  no eligible video (all seen / out of duration) — next channel")
             continue
-        paths = process_video(video["video_id"], channel, None, log)
+        paths = process_video(video["video_id"], channel, None, log, output_mode=output_mode)
         produced += paths
         if not paths:
             log("  channel produced 0 clips; continuing loop with next channel")
@@ -190,13 +227,13 @@ def daily_job(log: LogFn = _noop) -> list[str]:
 
 # --- custom single-video run (optional URL + prompt + count) ----------------
 def custom_job(url_or_id: str | None, log: LogFn = _noop, clip_count: int | None = None,
-               prompt_override: str | None = None) -> list[str]:
+               prompt_override: str | None = None, output_mode: str | None = None) -> list[str]:
     c = cfg.get_config()
     quota = int(c.get("job.daily_quota", 4))
     video_id = _extract_video_id(url_or_id) if url_or_id else None
 
     if not video_id:
-        return daily_job(log)
+        return daily_job(log, output_mode=output_mode)
 
     info = _fetch_video_info(video_id)
     ch = ensure_custom_video_row(video_id, info)
@@ -209,7 +246,7 @@ def custom_job(url_or_id: str | None, log: LogFn = _noop, clip_count: int | None
         log("[custom] quota already reached")
         return []
     return process_video(video_id, ch, None, log, force_n=n,
-                         prompt_override=prompt_override)
+                         prompt_override=prompt_override, output_mode=output_mode)
 
 
 def _extract_video_id(url: str) -> str | None:

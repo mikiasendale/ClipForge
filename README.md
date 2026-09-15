@@ -98,10 +98,44 @@ OpenRouter models** (vision is opt-in via `agent.vision_enabled`).
   → the OLD single-shot path (`engine="fallback_single_shot"`). The chosen engine
   is logged per clip and written to `data/logs/agent_{video_id}.jsonl`.
 
+### CapCut draft output (`app/capcut_export.py`) — feature B
+
+Each run you pick **one** output (radio on the dashboard, remembered between runs;
+`--auto --output capcut` for headless):
+
+- **mp4** → the existing cutter render (unchanged).
+- **capcut** → no render; a **CapCut/JianYing draft project** you open in CapCut
+  desktop, tweak, and export manually.
+
+Both modes share the **same agent decisions** — the tool-calling editor picks the
+windows + captions identically; capcut mode just hands the timeline to CapCut
+instead of ffmpeg. Same source `.mp4` is referenced and **trimmed in the timeline**
+(never pre-cut), center-cropped to 9:16, with one static caption text segment per
+clip. Drafts land in `capcut.draft_root` as `ClipForge_{date}_{title}_{ii}` and are
+never overwritten (auto `_2`, `_3` suffixes).
+
+```yaml
+capcut: { draft_root: "auto" }   # Windows auto-detects; set explicitly on Linux/macOS
+```
+Detect the draft root + writability on `/settings` (with a **[Test]** button that
+writes then deletes a dummy draft). `render_mode` + `draft_path` are stored on each
+clip; capcut rows show a "draft — awaiting manual export" badge + a **Copy path**
+button and the **Adjust** modal re-exports the draft instead of rendering mp4.
+
+**Honest caveats (also shown in `/settings`):**
+- `pyJianYingDraft==0.3.0` writes a **reverse-engineered** format — a CapCut
+  auto-update can silently break draft loading. **Pin your CapCut version.** If
+  CapCut ever refuses the drafts, nothing else breaks: mp4 mode is independent,
+  and a missing/broken import simply disables the capcut radio
+  ("CapCut export unavailable — pip install failed").
+- Face-tracking crop + word-synced captions are **mp4-only**; drafts use center
+  crop + per-clip static captions (CapCut's own auto-captions/effects are the
+  reason to use this mode). Final export from CapCut is always manual.
+- An unwritable/missing draft root refuses capcut mode but mp4 still runs.
+
 ### Review & edit (`/review`) — feature C
 
-Each finished clip has an **Adjust** editor over the **source** video:
-- `GET /media/source/{video_id}` streams the download with **manual HTTP Range
+Each finished clip has an **Adjust** editor over the **source** video:- `GET /media/source/{video_id}` streams the download with **manual HTTP Range
   (206/416)** so seeking works.
 - Two range sliders set in/out with live timecodes + preview; save is blocked
   (inline error) if length <5 s, >60 s, or overlapping another clip of the video.
@@ -134,6 +168,7 @@ else center crop. ASS captions (uppercase, ≤3 words/line, lower third, white w
 ```
 app/  main.py db.py config.py discovery.py selector.py
       downloader.py analyzer.py editor_ai.py cutter.py prompts.py job.py agent.py
+      capcut_export.py
       templates/ static/
 data/ clipforge.db  downloads/  output/  logs/  frames/  transcripts/  (gitignored)
 tests/ bootstrap.sh bootstrap.bat run.sh run.bat config.yaml .env.example
@@ -142,7 +177,7 @@ tests/ bootstrap.sh bootstrap.bat run.sh run.bat config.yaml .env.example
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest          # 51 tests (network + whisper + OpenRouter mocked; real ffmpeg renders)
+.venv/bin/python -m pytest          # 60 tests (network + whisper + OpenRouter mocked; real ffmpeg + real CapCut drafts)
 ```
 
 ---
@@ -170,6 +205,16 @@ tests/ bootstrap.sh bootstrap.bat run.sh run.bat config.yaml .env.example
 | C1 | `GET /media/source/{id}` with a `Range` header | **206** + correct `Content-Range`; seeking works in Chromium |
 | C2 | Adjust a clip's out-point, save | new file rendered; old row `revised_at` set; gallery shows the new version only |
 | C3 | Create a manual clip from a `done` video, >60s | rejected (400); ≤60s accepted, `engine=manual` |
+
+### CapCut output (feature B)
+
+| # | Step | Expected |
+|---|------|----------|
+| B1 | `capcut` run | draft folder `ClipForge_{date}_{title}_{ii}` in the detected root; opens in CapCut with correct trims, 9:16, captions |
+| B2 | Re-adjust a capcut clip in `/review` | draft regenerated, superseded folder removed (no orphans), old row `revised_at` set |
+| B3 | Uninstall/disable `pyJianYingDraft` | app boots; capcut radio disabled with tooltip; **mp4 pipeline unaffected** |
+| B4 | `--auto --output capcut` | writes drafts, prints their paths, exits 0 |
+| B5 | Unwritable/missing `draft_root` | loud error in `/settings`; capcut mode refused; mp4 still works |
 
 ---
 

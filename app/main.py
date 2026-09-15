@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import config as cfg
-from . import db, discovery, job as jobmod, prompts, selector, downloader, analyzer, cutter
+from . import db, discovery, job as jobmod, prompts, selector, downloader, analyzer, cutter, capcut_export
 
 APP_DIR = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(APP_DIR / "templates"))
@@ -225,15 +225,38 @@ def dashboard(request: Request):
             "text": c.get("openrouter.models.text"),
             "vision": c.get("openrouter.models.vision"),
         },
+        capcut=capcut_export.detect_draft_root(),
+        output_mode=db.get_state("output_mode", "mp4"),
         has_key=bool(c.openrouter_api_key),
         active="dashboard"))
 
 
+def _valid_output(mode: str | None) -> str:
+    return mode if mode in ("mp4", "capcut") else "mp4"
+
+
+def _current_output_mode() -> str:
+    mode = db.get_state("output_mode", "mp4") or "mp4"
+    # capcut only offered when the library + writable root are available
+    if mode == "capcut" and not capcut_export.detect_draft_root()["writable"]:
+        return "mp4"
+    return mode
+
+
 @app.post("/run")
-def run_daily():
-    if not runner.start("daily", jobmod.daily_job):
+async def run_daily(request: Request):
+    mode = "mp4"
+    try:
+        body = await request.json()
+        mode = _valid_output(body.get("output"))
+    except Exception:
+        pass
+    if mode == "capcut" and not capcut_export.detect_draft_root()["writable"]:
+        raise HTTPException(status_code=400, detail="CapCut draft root not writable — see Settings")
+    db.set_state("output_mode", mode)  # remember last used
+    if not runner.start("daily", (lambda log: jobmod.daily_job(log, output_mode=mode))):
         raise HTTPException(status_code=409, detail="A job is already running")
-    return JSONResponse({"started": True})
+    return JSONResponse({"started": True, "output": mode})
 
 
 @app.post("/run/custom")
@@ -242,14 +265,18 @@ async def run_custom(request: Request):
     url = (body.get("url") or "").strip() or None
     count = _to_int(body.get("count"))
     prompt = (body.get("prompt") or "").strip() or None
+    mode = _valid_output(body.get("output"))
     # an unchanged/blank prompt means "use the persisted default"
     if prompt and prompt.strip() == prompts.DEFAULT_PROMPT.strip():
         prompt = None
+    if mode == "capcut" and not capcut_export.detect_draft_root()["writable"]:
+        raise HTTPException(status_code=400, detail="CapCut draft root not writable — see Settings")
+    db.set_state("output_mode", mode)
     fn = (lambda log: jobmod.custom_job(url, log, clip_count=count,
-                                        prompt_override=prompt))
+                                        prompt_override=prompt, output_mode=mode))
     if not runner.start("custom", fn):
         raise HTTPException(status_code=409, detail="A job is already running")
-    return JSONResponse({"started": True})
+    return JSONResponse({"started": True, "output": mode})
 
 
 @app.get("/run/status")
@@ -281,7 +308,9 @@ def clips(request: Request):
         groups.setdefault(day, []).append(r)
     return TEMPLATES.TemplateResponse(request, "clips.html", base_ctx(
         request, groups=groups, total=len(rows), eligible=eligible,
-        clip_max=int(cfg.get_config().get("clip.length_s", 60)), active="clips"))
+        clip_max=int(cfg.get_config().get("clip.length_s", 60)),
+        capcut=capcut_export.detect_draft_root(),
+        output_mode=db.get_state("output_mode", "mp4"), active="clips"))
 
 
 # --- review media + manual clips (feature C) -------------------------------
@@ -403,13 +432,13 @@ async def api_create_clip(request: Request):
     src = downloader.resolve_source(video_id)
     if not src:
         raise HTTPException(status_code=404, detail="source file missing; re-download first")
-    # reuse the cached transcript only — never transcribe synchronously (stays <30s)
-    words = analyzer.cached_words(video_id)
-
-    out = cutter.review_path_for(video_id)
-    path = cutter.render_clip(src, s, e, out, words=words)
-    if not path:
-        raise HTTPException(status_code=500, detail="render failed")
+    # decide output mode: explicit body > existing clip (on replace) > current default
+    existing = db.get_clip(clip_id) if clip_id else None
+    render_mode = str(body.get("render_mode") or "").lower() or \
+        (existing["render_mode"] if existing and existing["render_mode"] else
+         db.get_state("output_mode", "mp4"))
+    if render_mode not in ("mp4", "capcut"):
+        render_mode = "mp4"
 
     if mode == "replace" and clip_id and db.get_clip(clip_id):
         db.mark_clip_revised(clip_id)
@@ -417,14 +446,47 @@ async def api_create_clip(request: Request):
     else:
         engine, parent = "manual", None
 
-    new_id = db.add_clip(video_id, s, e, str(path), caption, engine, "user",
-                         engine=engine, parent_clip_id=parent, hook_title=hook)
+    clip = {"start_s": s, "end_s": e, "caption": caption, "hook_title": hook, "engine": engine}
+
+    if render_mode == "capcut":
+        report = capcut_export.detect_draft_root()
+        if not report["available"]:
+            raise HTTPException(status_code=503, detail=report["error"] or "CapCut export unavailable")
+        if not report["writable"] or not report["draft_root"]:
+            raise HTTPException(status_code=503,
+                                detail=report["error"] or "draft root unwritable — mp4 mode still works")
+        title = vrow["title"] or "video"
+        try:
+            draft = capcut_export.export_draft(
+                {"video_id": video_id, "title": title, "duration_s": dur, "_clip_index": 0},
+                [clip], src_path=src)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"draft export failed: {e}")
+        # new draft succeeded; now remove the superseded folder (no orphans)
+        if existing and existing["render_mode"] == "capcut" and existing["draft_path"] != draft:
+            capcut_export.remove_draft(existing["draft_path"])
+        new_id = db.add_clip(video_id, s, e, None, caption, engine, "user",
+                             engine=engine, parent_clip_id=parent, hook_title=hook,
+                             render_mode="capcut", draft_path=draft)
+    else:
+        if not cfg.get_config().ffmpeg:
+            raise HTTPException(status_code=503, detail="ffmpeg unavailable")
+        words = analyzer.cached_words(video_id)
+        out = cutter.review_path_for(video_id)
+        path = cutter.render_clip(src, s, e, out, words=words)
+        if not path:
+            raise HTTPException(status_code=500, detail="render failed")
+        new_id = db.add_clip(video_id, s, e, str(path), caption, engine, "user",
+                             engine=engine, parent_clip_id=parent, hook_title=hook,
+                             render_mode="mp4")
+
     row = db.get_clip(new_id)
-    log_line = f"review: video {video_id} {s:.1f}-{e:.1f}s [{engine}]"
+    log_line = f"review: video {video_id} {s:.1f}-{e:.1f}s [{engine}/{render_mode}]"
     (cfg.LOGS_DIR / "review.log").open("a", encoding="utf-8").write(
         f"{datetime.now().isoformat(timespec='seconds')} {log_line}\n")
     return JSONResponse({"clip": {k: row[k] for k in row.keys()},
-                         "url": _outurl(str(row["path"])), "engine": engine})
+                         "url": _outurl(str(row["path"])) if row["path"] else None,
+                         "engine": engine, "render_mode": render_mode})
 
 
 def _agent_ctx(c) -> dict:
@@ -447,9 +509,29 @@ def settings(request: Request):
         clip_length=c.get("clip.length_s", 60),
         face_tracking=c.get("clip.face_tracking"),
         agent=_agent_ctx(c),
+        capcut=capcut_export.detect_draft_root(),
+        capcut_version=capcut_export.VERSION_NOTE,
+        output_mode=db.get_state("output_mode", "mp4"),
         has_key=bool(c.openrouter_api_key),
         test_result=None,
         active="settings"))
+
+
+@app.post("/settings/capcut_test")
+def settings_capcut_test():
+    ok, msg = capcut_export.test_write_draft()
+    return JSONResponse({"ok": ok, "message": msg})
+
+
+@app.post("/settings/output")
+async def settings_output(request: Request):
+    """Persist the last-used output mode so it survives reloads (radio choice)."""
+    body = await request.json()
+    out = str(body.get("output") or "").lower()
+    if out not in ("mp4", "capcut"):
+        raise HTTPException(status_code=400, detail="output must be mp4 or capcut")
+    db.set_state("output_mode", out)
+    return JSONResponse({"ok": True, "output": out})
 
 
 @app.post("/settings")
@@ -581,17 +663,21 @@ def _outurl(p) -> str:
 TEMPLATES.env.filters["outurl"] = _outurl
 
 
-# --- CLI entry: `python -m app.main --auto` (spec §10) ----------------------
-def _run_auto() -> int:
+# --- CLI entry: `python -m app.main --auto [--output capcut|mp4]` ------------
+def _run_auto(output_mode: str | None = None) -> int:
     db.init_db()
     db.reset_run_state()
-    produced: list[str] = []
+    if output_mode in ("mp4", "capcut"):
+        db.set_state("output_mode", output_mode)
+    else:
+        output_mode = db.get_state("output_mode", "mp4")  # default: last used
 
     def log(msg: str) -> None:
         print(msg, flush=True)
 
-    produced = jobmod.daily_job(log)
-    print("\nProduced clips:")
+    produced = jobmod.daily_job(log, output_mode=output_mode)
+    kind = "CapCut drafts" if output_mode == "capcut" else "clips"
+    print(f"\nProduced {kind}:")
     for p in produced:
         print(" ", p)
     return 0
@@ -601,10 +687,12 @@ if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(prog="clipforge")
     ap.add_argument("--auto", action="store_true", help="run daily job headless and exit")
+    ap.add_argument("--output", choices=["mp4", "capcut"], default=None,
+                    help="output mode (default: last used)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
     if args.auto:
-        raise SystemExit(_run_auto())
+        raise SystemExit(_run_auto(args.output))
     import uvicorn
     uvicorn.run("app.main:app", host=args.host, port=args.port)

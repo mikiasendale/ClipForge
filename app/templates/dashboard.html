@@ -12,6 +12,19 @@
   </div>
 </div>
 
+<div class="output-bar panel">
+  <span class="ob-label">Output:</span>
+  <label class="radio"><input type="radio" name="output" value="mp4" {% if output_mode != 'capcut' %}checked{% endif %}> mp4</label>
+  <label class="radio {{ 'disabled' if not capcut.available }}" {% if not capcut.available %}title="{{ capcut.error }}"{% endif %}>
+    <input type="radio" name="output" value="capcut" {% if output_mode == 'capcut' and capcut.available %}checked{% endif %} {{ 'disabled' if not capcut.available }}> CapCut draft
+  </label>
+  {% if capcut.available %}
+    <span class="ob-note muted">{{ capcut.draft_root or 'set capcut.draft_root in settings' }}</span>
+  {% else %}
+    <span class="ob-note err">CapCut export unavailable — pip install failed</span>
+  {% endif %}
+</div>
+
 <div id="custom-panel" class="panel hidden">
   <h3>Custom run</h3>
   <div class="field">
@@ -60,7 +73,7 @@
 <script>
 (function(){
   const logbox = document.getElementById('logbox');
-  let lastLen = 0;
+  const outputRadio = ()=> (document.querySelector('input[name=output]:checked')||{}).value || 'mp4';
 
   async function poll(){
     try{
@@ -76,8 +89,15 @@
   function escapeHtml(x){ return (x||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
   setInterval(poll, 2000); poll();
 
+  // persist last-used output choice
+  document.querySelectorAll('input[name=output]').forEach(el => el.addEventListener('change', ()=>{
+    fetch('/settings/output', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({output: outputRadio()})});
+  }));
+
   document.getElementById('btn-run').addEventListener('click', async ()=>{
-    const r = await fetch('/run', {method:'POST'});
+    const r = await fetch('/run', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({output: outputRadio()})});
     if (r.status===409) alert('A job is already running.');
     poll();
   });
@@ -89,6 +109,7 @@
       url: document.getElementById('custom-url').value,
       count: document.getElementById('custom-count').value || null,
       prompt: document.getElementById('custom-prompt').value,
+      output: outputRadio(),
     };
     const r = await fetch('/run/custom', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     if (r.status===409) alert('A job is already running.');

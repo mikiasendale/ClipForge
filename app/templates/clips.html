@@ -15,8 +15,17 @@
     <h2>{{ day }} <span class="muted">· {{ items|length }}</span></h2>
     <div class="clip-grid">
       {% for c in items %}
-      <figure class="clip" data-clip='{{ {"id":c.id,"video_id":c.video_id,"start_s":c.start_s,"end_s":c.end_s,"caption":c.caption,"hook_title":c.hook_title,"duration_url":c.duration_url,"has_source":c.has_source,"duration_s":0}|tojson }}'>
-        <video controls preload="metadata" src="{{ c.path|outurl }}"></video>
+      {% set is_draft = c.render_mode == 'capcut' %}
+      <figure class="clip {{ 'draft' if is_draft }}" data-clip='{{ {"id":c.id,"video_id":c.video_id,"start_s":c.start_s,"end_s":c.end_s,"caption":c.caption,"hook_title":c.hook_title,"duration_url":c.duration_url,"has_source":c.has_source,"duration_s":0,"render_mode":c.render_mode,"draft_path":c.draft_path}|tojson }}'>
+        {% if is_draft %}
+          <div class="draftbox">
+            <div class="drafticon">🎬</div>
+            <div class="drafttag">draft — awaiting manual export</div>
+            <div class="muted small">open this folder in CapCut desktop, tweak, export</div>
+          </div>
+        {% else %}
+          <video controls preload="metadata" src="{{ c.path|outurl }}"></video>
+        {% endif %}
         <figcaption>
           {% if c.hook_title %}<div class="hook">{{ c.hook_title }}</div>{% endif %}
           <div class="cap">{{ c.caption or '—' }}</div>
@@ -27,8 +36,15 @@
           </div>
           <div class="clip-row">
             <button class="adjust ghost sm-btn" {{ 'disabled' if not c.has_source }}>✎ Adjust</button>
-            <span class="clippath muted">{{ c.path|relpath }}</span>
+            {% if is_draft %}
+              <button class="copy-path ghost sm-btn" data-path="{{ c.draft_path }}">⧉ Copy path</button>
+            {% endif %}
           </div>
+          {% if is_draft %}
+            <div class="clippath muted" title="{{ c.draft_path }}">{{ c.draft_path }}</div>
+          {% else %}
+            <div class="clip-row"><span class="clippath muted">{{ c.path|relpath }}</span></div>
+          {% endif %}
         </figcaption>
       </figure>
       {% endfor %}
@@ -83,9 +99,11 @@
 <script>
 (function(){
   const CLIP_MAX = {{ clip_max }};
+  const CAPCUT_OK = {{ 'true' if capcut.available and capcut.writable and capcut.draft_root else 'false' }};
+  const OUTPUT_MODE = {{ output_mode | tojson }};
   const $ = s => document.querySelector(s);
   const modal = $('#modal');
-  let state = {};   // {video_id, clip_id, mode, duration}
+  let state = {};   // {video_id, clip_id, mode, render_mode, duration}
 
   const inR = $('#in-range'), outR = $('#out-range'), vid = $('#src-video');
   const tcIn = $('#tc-in'), tcOut = $('#tc-out'), tcLen = $('#tc-len');
@@ -125,6 +143,7 @@
 
   function open(d){
     state = Object.assign({mode:'new', clip_id:null, duration:0}, d);
+    if (!state.render_mode) state.render_mode = (OUTPUT_MODE==='capcut' && CAPCUT_OK) ? 'capcut' : 'mp4';
     $('#modal-title').textContent = state.mode==='replace' ? 'Adjust clip' : 'New clip from source';
     modal.classList.remove('hidden');
     statusEl.textContent = '';
@@ -169,14 +188,23 @@
 
   saveBtn.addEventListener('click', async ()=>{
     if (!validate()) return;
-    saveBtn.disabled = true; statusEl.textContent = 'Rendering…';
+    saveBtn.disabled = true; statusEl.textContent = (state.render_mode==='capcut'?'Writing draft…':'Rendering…');
     const body = {video_id: state.video_id, start_s:+inR.value, end_s:+outR.value,
-                  caption:fCap.value, hook_title:fHook.value, mode: state.mode, clip_id: state.clip_id};
+                  caption:fCap.value, hook_title:fHook.value, mode: state.mode,
+                  clip_id: state.clip_id, render_mode: state.render_mode || 'mp4'};
     const r = await fetch('/api/clips', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     if (r.status === 400){ statusEl.textContent=''; errEl.textContent=(await r.json()).detail; saveBtn.disabled=false; return; }
-    if (!r.ok){ statusEl.textContent='render failed ('+r.status+')'; saveBtn.disabled=false; return; }
+    if (r.status === 503){ statusEl.textContent=''; errEl.textContent=(await r.json()).detail; saveBtn.disabled=false; return; }
+    if (!r.ok){ statusEl.textContent='save failed ('+r.status+')'; saveBtn.disabled=false; return; }
     statusEl.textContent='Saved ✓'; setTimeout(()=>location.reload(), 700);
   });
+
+  document.querySelectorAll('.clip .copy-path').forEach(btn=>btn.addEventListener('click', ()=>{
+    const p = btn.dataset.path || '';
+    navigator.clipboard && navigator.clipboard.writeText(p).then(()=>{
+      btn.textContent='✓ Copied'; setTimeout(()=>btn.textContent='⧉ Copy path', 1200);
+    }).catch(()=>{ window.prompt('Copy draft path:', p); });
+  }));
 })();
 </script>
 {% endblock %}

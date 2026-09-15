@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS clips (
     model         TEXT,
     prompt_source TEXT NOT NULL DEFAULT 'default',
     engine        TEXT NOT NULL DEFAULT 'single_shot',
+    render_mode   TEXT NOT NULL DEFAULT 'mp4',
+    draft_path    TEXT,
     hook_title    TEXT,
     revised_at    TEXT,
     parent_clip_id INTEGER REFERENCES clips(id),
@@ -204,17 +206,29 @@ def known_video_ids(db_path: Path | str | None = None) -> set[str]:
     return {r["video_id"] for r in rows}
 
 
+def video_with_channel(video_id: str, db_path: Path | str | None = None) -> sqlite3.Row | None:
+    return query_one(
+        """SELECT v.video_id, v.title, v.duration_s, v.status, v.channel_id,
+                  c.title AS channel_title, c.topic
+           FROM videos v JOIN channels c ON c.id = v.channel_id
+           WHERE v.video_id=?""",
+        (video_id,), db_path,
+    )
+
+
 # --- clips ------------------------------------------------------------------
 def add_clip(video_id: str, start_s: float, end_s: float, path: str | None, caption: str | None,
              model: str | None, prompt_source: str, engine: str = "single_shot",
              parent_clip_id: int | None = None, hook_title: str | None = None,
+             render_mode: str = "mp4", draft_path: str | None = None,
              db_path: Path | str | None = None) -> int:
     return execute(
         """INSERT INTO clips(video_id, start_s, end_s, path, caption, model,
-                             prompt_source, engine, parent_clip_id, hook_title, created_at)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                             prompt_source, engine, parent_clip_id, hook_title,
+                             render_mode, draft_path, created_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (video_id, start_s, end_s, path, caption, model, prompt_source,
-         engine, parent_clip_id, hook_title, now_iso()),
+         engine, parent_clip_id, hook_title, render_mode, draft_path, now_iso()),
         db_path,
     )
 

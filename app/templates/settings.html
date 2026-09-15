@@ -50,6 +50,32 @@
     <label class="check"><input type="checkbox" name="agent_vision" value="on" {{ 'checked' if agent.vision_enabled }}> Enable vision tool (get_keyframes — needs a vision model)</label>
     <p class="muted small">Max loop steps: {{ agent.max_steps }} (set in <code>config.yaml</code>)</p>
   </fieldset>
+  <fieldset class="agent-set capcut-set">
+    <legend>CapCut draft export <span class="muted">(second output mode)</span></legend>
+    {% if not capcut.available %}
+      <div class="capcut-bad">⛔ {{ capcut.error or 'CapCut export unavailable — pip install failed' }}</div>
+    {% else %}
+      <div class="capcut-row"><span class="muted">Detected draft root</span>
+        <span class="mono">{{ capcut.draft_root or '— none detected —' }}</span>
+        <span class="src-pill">{{ capcut.source or 'unconfigured' }}</span>
+        <span class="src-pill {{ 'ok' if capcut.writable else 'bad' }}">{{ 'writable' if capcut.writable else 'not writable' }}</span>
+      </div>
+      {% if capcut.error %}<div class="capcut-bad">⚠ {{ capcut.error }}</div>{% endif %}
+      <p class="muted small">Set <code>capcut.draft_root</code> in <code>config.yaml</code> to change this path
+        (auto-detect only works on Windows; give an explicit folder on Linux/macOS).</p>
+      <div class="actions">
+        <button id="capcut-test" class="ghost" type="button">✎ Test write access</button>
+        <span id="capcut-result" class="muted"></span>
+      </div>
+    {% endif %}
+    <div class="capcut-note">
+      <b>Fragile format.</b> {{ capcut_version }} writes a <i>reverse-engineered</i> CapCut draft.
+      A CapCut auto-update can silently break draft loading. If that happens, mp4 mode is unaffected.
+      <b>Pin your CapCut version</b> and upgrade carefully. Face-tracking crop + word-synced captions are
+      <b>mp4-mode-only</b>; drafts use center-crop + one static caption per clip. Final export from
+      CapCut is always manual.
+    </div>
+  </fieldset>
   <div class="actions">
     <button class="primary" type="submit">Save settings</button>
     <button id="test-key" class="ghost" type="button">Test OpenRouter key</button>
@@ -63,6 +89,14 @@
 document.getElementById('test-key').addEventListener('click', async ()=>{
   const el = document.getElementById('key-result'); el.textContent = 'testing…';
   const r = await fetch('/settings/test_key', {method:'POST'});
+  const j = await r.json();
+  el.textContent = j.ok ? ('✓ ' + j.message) : ('✗ ' + j.message);
+  el.className = j.ok ? 'ok' : 'err';
+});
+var ct = document.getElementById('capcut-test');
+if (ct) ct.addEventListener('click', async ()=>{
+  const el = document.getElementById('capcut-result'); el.textContent = 'testing…'; el.className='muted';
+  const r = await fetch('/settings/capcut_test', {method:'POST'});
   const j = await r.json();
   el.textContent = j.ok ? ('✓ ' + j.message) : ('✗ ' + j.message);
   el.className = j.ok ? 'ok' : 'err';

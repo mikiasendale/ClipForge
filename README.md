@@ -177,8 +177,27 @@ tests/ bootstrap.sh bootstrap.bat run.sh run.bat config.yaml .env.example
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest          # 60 tests (network + whisper + OpenRouter mocked; real ffmpeg + real CapCut drafts)
+.venv/bin/python -m pytest          # 72 tests (network + whisper + OpenRouter mocked; real ffmpeg renders, real CapCut drafts)
 ```
+
+---
+
+## Design system
+
+One file — `app/static/style.css` — a dark "control room" theme defined entirely
+with `:root` CSS custom properties (surfaces, one violet accent `#8B5CF6`,
+semantic ok/danger/warn/info, 4px spacing grid, radii, type scale). No web fonts,
+no CDN, no framework, no build step.
+
+- **Icons**: inline SVG copied from Lucide, directly in the templates (nav, bell,
+  buttons, draft scissors, check/close) — no icon library or font.
+- **States**: every control has default / hover / active (`scale .98`) /
+  `:focus-visible` (2px accent ring, never removed) / disabled (`.45`) /
+  loading (spinner) styles. Destructive buttons use a **2-step confirm**
+  (first click arms to red "Confirm…", second executes) — never `window.confirm()`.
+- **Motion**: 140ms on color/transform only; `prefers-reduced-motion: reduce`
+  disables all transitions/animations.
+- **Responsive**: desktop-first ≥1024px, collapses to a single column ≤768px.
 
 ---
 

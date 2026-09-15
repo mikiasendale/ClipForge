@@ -23,17 +23,17 @@
     <div class="ring-label">clips today</div>
   </div>
   <div class="run-actions">
-    <button id="btn-run" class="primary">▶ Run daily job</button>
-    <button id="btn-custom" class="ghost">⚙ Run custom…</button>
+    <button id="btn-run" class="btn primary lg"><svg class="lead-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg><span class="spinner"></span><span class="lbl">Run daily job</span></button>
+    <button id="btn-custom" class="btn ghost lg"><svg class="lead-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4"/></svg>Run custom…</button>
   </div>
 </div>
 
 <div class="output-bar panel">
-  <span class="ob-label">Output:</span>
-  <label class="radio"><input type="radio" name="output" value="mp4" {% if output_mode != 'capcut' %}checked{% endif %}> mp4</label>
-  <label class="radio {{ 'disabled' if not capcut.available }}" {% if not capcut.available %}title="{{ capcut.error }}"{% endif %}>
-    <input type="radio" name="output" value="capcut" {% if output_mode == 'capcut' and capcut.available %}checked{% endif %} {{ 'disabled' if not capcut.available }}> CapCut draft
-  </label>
+  <span class="ob-label">Output</span>
+  <div class="seg">
+    <input type="radio" name="output" id="out-mp4" value="mp4" {% if output_mode != 'capcut' %}checked{% endif %}><label for="out-mp4">mp4</label>
+    <input type="radio" name="output" id="out-capcut" value="capcut" {% if output_mode == 'capcut' and capcut.available %}checked{% endif %} {% if not capcut.available %}disabled{% endif %}><label for="out-capcut" class="{{ 'disabled' if not capcut.available }}" {% if not capcut.available %}title="{{ capcut.error }}"{% endif %}>CapCut draft</label>
+  </div>
   {% if capcut.available %}<span class="ob-note muted">{{ capcut.draft_root or 'set capcut.draft_root in settings' }}</span>
   {% else %}<span class="ob-note err">CapCut export unavailable — pip install failed</span>{% endif %}
 </div>

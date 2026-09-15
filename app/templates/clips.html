@@ -3,7 +3,7 @@
 {% block content %}
 <div class="dash-head">
   <div><h1>Clips &amp; review <span class="muted">({{ total }})</span></h1></div>
-  <button id="btn-new" class="primary" {{ 'disabled' if not eligible }}>+ New clip from source</button>
+  <button id="btn-new" class="btn primary lg" {{ 'disabled' if not eligible }}><svg class="lead-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>New clip from source</button>
 </div>
 <p class="muted">Adjust any clip's in/out points and caption over its source video, then re-render in seconds. Superseded versions are hidden.</p>
 
@@ -16,10 +16,10 @@
     <div class="clip-grid">
       {% for c in items %}
       {% set is_draft = c.render_mode == 'capcut' %}
-      <figure class="clip {{ 'draft' if is_draft }}" data-clip='{{ {"id":c.id,"video_id":c.video_id,"start_s":c.start_s,"end_s":c.end_s,"caption":c.caption,"hook_title":c.hook_title,"duration_url":c.duration_url,"has_source":c.has_source,"duration_s":0,"render_mode":c.render_mode,"draft_path":c.draft_path}|tojson }}'>
+      <figure class="clip {{ 'draft' if is_draft }}" data-clip='{{ {"id":c.id,"video_id":c.video_id,"start_s":c.start_s,"end_s":c.end_s,"caption":c.caption,"hook_title":c.hook_title,"duration_url":c.duration_url,"has_source":c.has_source,"duration_s":0,"render_mode":c.render_mode,"draft_path":c.draft_path,"url":(c.path|outurl),"status":c.status}|tojson }}'>
         {% if is_draft %}
           <div class="draftbox">
-            <div class="drafticon">🎬</div>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
             <div class="drafttag">draft — awaiting manual export</div>
             <div class="muted small">open this folder in CapCut desktop, tweak, export</div>
           </div>
@@ -32,18 +32,29 @@
           <div class="clipmeta muted">
             {{ (c.end_s - c.start_s)|round|int }}s @ {{ c.start_s|round|int }}s ·
             <span class="tag {{ c.prompt_source }}">{{ c.prompt_source }}</span> ·
-            <span class="eng {{ c.engine }}">{{ c.engine }}</span>
+            <span class="eng {{ c.engine }}">{{ c.engine }}</span> ·
+            <span class="clip-status st-{{ c.status }}">{{ c.status }}</span>
           </div>
-          <div class="clip-row">
-            <button class="adjust ghost sm-btn" {{ 'disabled' if not c.has_source }}>✎ Adjust</button>
+          <div class="clip-actions">
+            <button class="adjust ghost sm-btn" {{ 'disabled' if not c.has_source }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>Adjust</button>
             {% if is_draft %}
-              <button class="copy-path ghost sm-btn" data-path="{{ c.draft_path }}">⧉ Copy path</button>
+              <button class="copy-path ghost sm-btn" data-path="{{ c.draft_path }}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy path</button>
+            {% else %}
+              <a class="secondary sm-btn" href="{{ c.path|outurl }}" download>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download</a>
             {% endif %}
+            {% if not is_draft %}
+              <button class="primary sm-btn keep" {{ 'disabled' if c.status != 'pending' }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Keep</button>
+            {% endif %}
+            <button class="danger sm-btn discard" {{ 'disabled' if c.status != 'pending' }}>Discard</button>
           </div>
           {% if is_draft %}
             <div class="clippath muted" title="{{ c.draft_path }}">{{ c.draft_path }}</div>
           {% else %}
-            <div class="clip-row"><span class="clippath muted">{{ c.path|relpath }}</span></div>
+            <div class="clippath muted">{{ c.path|relpath }}</div>
           {% endif %}
         </figcaption>
       </figure>
@@ -57,7 +68,8 @@
   <div class="modal-card">
     <div class="modal-head">
       <h3 id="modal-title">Adjust clip</h3>
-      <button id="modal-x" class="ghost">✕</button>
+      <button id="modal-x" class="icon-btn" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
     </div>
     <div class="modal-body">
       <div class="preview">
@@ -201,10 +213,36 @@
 
   document.querySelectorAll('.clip .copy-path').forEach(btn=>btn.addEventListener('click', ()=>{
     const p = btn.dataset.path || '';
-    navigator.clipboard && navigator.clipboard.writeText(p).then(()=>{
-      btn.textContent='✓ Copied'; setTimeout(()=>btn.textContent='⧉ Copy path', 1200);
-    }).catch(()=>{ window.prompt('Copy draft path:', p); });
+    const done = ()=>{ btn.classList.add('ok-text'); setTimeout(()=>btn.classList.remove('ok-text'), 1200); };
+    if (navigator.clipboard) navigator.clipboard.writeText(p).then(done).catch(()=>{ window.prompt('Copy draft path:', p); });
+    else window.prompt('Copy draft path:', p);
   }));
+
+  // Keep / Discard on review cards (Discard is a 2-step confirm, no native dialog)
+  document.querySelectorAll('.clip .keep').forEach(b=>b.addEventListener('click', async ()=>{
+    const card = b.closest('.clip');
+    b.disabled = true;
+    const r = await fetch('/api/clips/'+card.dataset.clip.match(/"id":(\d+)/)[1]+'/keep', {method:'POST'});
+    if (r.ok){ const st=card.querySelector('.clip-status'); st.textContent='approved'; st.className='clip-status st-approved';
+      card.querySelector('.discard').disabled=true; const v=card.querySelector('video'); /* file moved, src may 404 */ }
+    else b.disabled=false;
+  }));
+  document.querySelectorAll('.clip .discard').forEach(b=>b.addEventListener('click', async ()=>{
+    const card = b.closest('.clip'); const id = card.dataset.clip.match(/"id":(\d+)/)[1];
+    if (!b.classList.contains('armed')){
+      b.dataset.label = b.textContent; b.classList.add('armed'); b.textContent='Confirm discard';
+      setTimeout(()=>{ b.classList.remove('armed'); b.textContent=b.dataset.label; }, 4000);
+      return;
+    }
+    b.disabled=true;
+    const r = await fetch('/api/clips/'+id+'/discard', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({confirm:true})});
+    if (r.ok){ const st=card.querySelector('.clip-status'); st.textContent='discarded'; st.className='clip-status st-discarded';
+      card.querySelector('.keep').disabled=true; }
+    else b.disabled=false;
+  }));
+
+  // live prepend from SSE (app.js)
+  window.onClipRendered = function(){ /* reload to show the new card inline */ location.reload(); };
 })();
 </script>
 {% endblock %}

@@ -12,7 +12,7 @@ import mimetypes
 import threading
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -22,6 +22,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import config as cfg
 from . import db, discovery, job as jobmod, prompts, selector, downloader, analyzer, cutter, capcut_export
+from . import events, notifier, scheduler as sched_mod, suggest, health
 
 APP_DIR = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(APP_DIR / "templates"))
@@ -68,6 +69,10 @@ class JobRunner:
                     db.set_state("job_active", "0")
                     with self._lock:
                         self._thread = None
+                try:
+                    _post_run_hooks(self._log)
+                except Exception as e:  # pragma: no cover
+                    self._log(f"post-run hook error: {e}")
 
             self._thread = threading.Thread(target=runner, daemon=True)
             self._thread.start()
@@ -99,6 +104,93 @@ app.mount("/output", StaticFiles(directory=str(cfg.OUTPUT_DIR)), name="output")
 
 _CANDIDATE_CACHE: dict[str, tuple[float, list[dict]]] = {}
 _CACHE_TTL = 600.0
+
+
+# --- proactive hooks --------------------------------------------------------
+def _log_auto(record: dict) -> None:
+    try:
+        cfg.LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        with (cfg.LOGS_DIR / "auto_actions.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), **record}) + "\n")
+    except OSError:
+        pass
+
+
+def auto_review_pass(log=lambda *_a: None) -> int:
+    """review.mode='auto': approve unreviewed clips older than auto_approve_hours."""
+    c = cfg.get_config()
+    if str(c.get("review.mode", "manual")).lower() != "auto":
+        return 0
+    hours = float(c.get("review.auto_approve_hours", 24) or 24)
+    n = 0
+    for clip in db.unreviewed_clips(older_than_hours=hours):
+        if clip["render_mode"] == "capcut":
+            continue  # drafts can't be auto-'kept' (no file to approve)
+        db.approve_clip(clip["id"])
+        try:
+            newpath = cutter.move_to_approved(clip["path"])
+            if newpath:
+                db.execute("UPDATE clips SET path=? WHERE id=?", (str(newpath), clip["id"]))
+        except OSError:
+            pass
+        _log_auto({"action": "auto_approve", "clip_id": clip["id"], "engine": clip["engine"]})
+        n += 1
+    if n:
+        log(f"[auto-review] approved {n} clip(s) after {hours:.0f}h")
+        events.job_progress("auto_review", f"approved {n}", 1.0)
+    return n
+
+
+def _post_run_hooks(log) -> None:
+    auto_review_pass(log)
+    health.run_all(log)
+    suggest.run_all(log)
+
+
+def _try_prestage() -> None:
+    if runner.running or db.get_state("prestage_active") == "1":
+        return
+    db.set_state("prestage_active", "1")
+
+    def _log(msg: str) -> None:
+        events.job_progress("prestage", msg, 0.5)
+
+    def _run() -> None:
+        try:
+            from . import prestaging
+            prestaging.prestage_once(_log)
+        except Exception as e:  # pragma: no cover
+            notifier.notify("prestage", "warn", "Pre-staging failed", str(e)[:200])
+        finally:
+            db.set_state("prestage_active", "0")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+# --- scheduler lifecycle (guard double-start) --------------------------------
+@app.on_event("startup")
+def _startup() -> None:
+    sched_mod.configure(daily=_start_daily_job, prestage=_try_prestage)
+    sched_mod.scheduler.start()
+    # boot-time checks (spec: at boot)
+    auto_review_pass()
+    health.run_all()
+    suggest.run_all()
+
+
+@app.on_event("shutdown")
+def _shutdown() -> None:
+    sched_mod.scheduler.shutdown()
+
+
+def _start_daily_job() -> bool:
+    """Called by APScheduler + catch-up; returns whether it started."""
+    return runner.start("daily", jobmod.daily_job)
+
+
+def _ensure_restart_state() -> None:
+    # surface a pending 'restart required' banner via state (read in base_ctx)
+    return None
 
 
 def candidates_for(topic: str, refresh: bool = False, deep: bool = False) -> list[dict]:
@@ -140,6 +232,14 @@ def base_ctx(request: Request, **kw) -> dict:
         "has_channels": db.channel_count() > 0,
         "default_prompt": db.get_state("default_prompt", None) or prompts.DEFAULT_PROMPT,
         "version": "1.0.0",
+        # proactive layer context (header bell, schedule banner)
+        "unread": db.unread_count(),
+        "schedule_enabled": bool(c.get("schedule.enabled", True)),
+        "schedule_time": c.get("schedule.time", "06:00"),
+        "next_run_countdown": sched_mod.scheduler.next_run_countdown(),
+        "next_run_iso": sched_mod.scheduler.next_run_iso(),
+        "restart_required": db.get_state("restart_required", None),
+        "review_mode": c.get("review.mode", "manual"),
     }
     ctx.update(kw)
     return ctx
@@ -157,7 +257,8 @@ def index():
 def onboarding(request: Request, refresh: int = 0, deep: int = 0):
     """Renders instantly; each topic's cards are fetched from /api/candidates."""
     topics = _topics_meta()
-    saved = {t["key"]: [dict(r) for r in db.channels_by_topic(t["key"])] for t in topics}
+    saved = {t["key"]: [dict(r) for r in db.channels_by_topic(t["key"], only_active=True)]
+             for t in topics}
     return TEMPLATES.TemplateResponse(request, "onboarding.html", base_ctx(
         request, topics=topics, saved=saved, deep=bool(deep),
         topics_json=json.dumps({}), active="onboarding"))
@@ -175,9 +276,15 @@ def api_candidates(topic: str, refresh: int = 0, deep: int = 0):
 
 @app.post("/onboarding")
 async def onboarding_save(request: Request):
-    """Save picked channels. Enforces exact per-topic pick counts (spec §4/§11.2)."""
+    """Save picked channels (+ the rest of the candidate pool, deactivated).
+
+    Enforces exact per-topic pick counts (spec §4/§11.2). All candidates shown at
+    onboarding are persisted so the yield-swap suggestion has a pool to promote
+    from; only picked ones are is_active=1.
+    """
     payload = await request.json()
     selected: dict[str, list[dict]] = payload.get("selected", {}) or {}
+    pool: dict[str, list[dict]] = payload.get("pool", {}) or {}
     required = {t["key"]: t["pick"] for t in _topics_meta()}
     errors = []
     for key, need in required.items():
@@ -187,22 +294,32 @@ async def onboarding_save(request: Request):
     if errors:
         raise HTTPException(status_code=400, detail="; ".join(errors))
 
-    saved = 0
+    saved = active = 0
     for key, chans in selected.items():
-        # wipe previous picks for this topic so counts stay exact on re-save
+        active_ids = {str(c.get("platform_channel_id")) for c in chans}
+        # merge picked + remaining pool candidates for this topic into one set
+        merged: dict[str, dict] = {}
+        for ch in pool.get(key, []) or []:
+            cid = str(ch.get("platform_channel_id"))
+            merged[cid] = ch
+        for ch in chans:
+            cid = str(ch.get("platform_channel_id"))
+            merged[cid] = ch
         db.execute("DELETE FROM videos WHERE channel_id IN "
                    "(SELECT id FROM channels WHERE topic=?)", (key,))
         db.execute("DELETE FROM channels WHERE topic=?", (key,))
-        for ch in chans:
+        for cid, ch in merged.items():
+            is_active = 1 if cid in active_ids else 0
             db.add_channel(
-                str(ch.get("platform_channel_id")), str(ch.get("title") or "unknown"),
-                key, ch.get("subtopic"), _to_int(ch.get("subs")),
-                _to_int(ch.get("video_count")), _to_int(ch.get("joined_year")),
-                ch.get("avatar_url"),
+                cid, str(ch.get("title") or "unknown"), key, ch.get("subtopic"),
+                _to_int(ch.get("subs")), _to_int(ch.get("video_count")),
+                _to_int(ch.get("joined_year")), ch.get("avatar_url"), is_active=is_active,
             )
             saved += 1
+            active += is_active
     db.set_int_state("rotation_index", 0)
-    return JSONResponse({"ok": True, "saved": saved, "redirect": "/dashboard"})
+    return JSONResponse({"ok": True, "saved": saved, "active": active,
+                         "redirect": "/dashboard"})
 
 
 def _to_int(v) -> int | None:
@@ -217,16 +334,45 @@ def dashboard(request: Request):
     if db.channel_count() == 0:
         return RedirectResponse("/onboarding")
     c = cfg.get_config()
-    channels = [dict(r) for r in db.all_channels()]
+    channels = [dict(r) for r in db.active_channels()]
+
+    # last batch = clips from the most recent run day that still need a decision
+    last_day = db.get_state("last_run_date", None)
+    last_batch = []
+    if last_day:
+        for r in db.clips_by_date(last_day):
+            d = dict(r)
+            d["url"] = _outurl(d["path"]) if d["path"] else None
+            last_batch.append(d)
+
+    # tonight's plan = staged videos
+    tonight = []
+    for st in db.staged_videos():
+        tonight.append({"video_id": st["video_id"], "title": st["title"],
+                        "topic": st["topic"], "channel_id": st["channel_id"],
+                        "channel_title": st["channel_title"], "duration_s": st["duration_s"],
+                        "thumbnail": st["thumbnail"],
+                        "windows": len(analyzer.cached_windows(st["video_id"]))})
+
+    # review pending > 48h
+    pending = [dict(r) for r in db.unreviewed_clips(older_than_hours=48)]
+
+    # advisory cards: unread suggestion/health notifications (with actions)
+    cards = []
+    for n in db.list_notifications(limit=20):
+        if n["kind"] in ("suggestion", "health", "quota_unmet") and not n["acted_at"]:
+            d = _notif_dict(n)
+            cards.append(d)
+
     return TEMPLATES.TemplateResponse(request, "dashboard.html", base_ctx(
         request, channels=channels, topics=_topics_meta(),
         default_count=selector.windows_for_duration(600),
-        models={
-            "text": c.get("openrouter.models.text"),
-            "vision": c.get("openrouter.models.vision"),
-        },
+        models={"text": c.get("openrouter.models.text"),
+                "vision": c.get("openrouter.models.vision")},
         capcut=capcut_export.detect_draft_root(),
         output_mode=db.get_state("output_mode", "mp4"),
+        last_batch=last_batch, tonight=tonight, pending=pending, cards=cards,
+        today=datetime.now().strftime("%A, %d %B %Y"),
         has_key=bool(c.openrouter_api_key),
         active="dashboard"))
 
@@ -282,6 +428,279 @@ async def run_custom(request: Request):
 @app.get("/run/status")
 def run_status():
     return JSONResponse(runner.status())
+
+
+# --- SSE live updates (feature P1, spec §3.4) -------------------------------
+@app.get("/events")
+async def sse(request: Request):
+    sub = events.bus.subscribe()
+    return StreamingResponse(events.stream(sub), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no", "Connection": "keep-alive"})
+
+
+# --- notifications (feature P2, spec §3.5) ----------------------------------
+@app.get("/api/notifications")
+def api_notifications(unread: int = 0):
+    rows = db.list_notifications(unread_only=bool(unread))
+    return JSONResponse({"unread": db.unread_count(),
+                         "notifications": [_notif_dict(r) for r in rows]})
+
+
+def _notif_dict(r) -> dict:
+    import json as _json
+    d = dict(r)
+    try:
+        d["actions"] = _json.loads(d.pop("actions_json", None) or "[]")
+    except (TypeError, _json.JSONDecodeError):
+        d["actions"] = []
+    return d
+
+
+@app.post("/api/notifications/{notif_id}/read")
+async def api_notif_read(notif_id: int, request: Request):
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    db.mark_notification_read(notif_id, acted=bool(body.get("acted")))
+    return JSONResponse({"ok": True})
+
+
+# --- action dispatch (suggestions + health). DESTRUCTIVE -> requires confirm. -
+_DESTRUCTIVE = {"update_ytdlp", "cleanup_sources", "cleanup_stale", "discard_clip",
+                "swap_channel_revert"}
+
+
+@app.post("/api/actions/{action}")
+async def api_action(action: str, request: Request):
+    body = await request.json()
+    confirm = bool(body.get("confirm"))
+    args = body.get("args", {}) or {}
+    notif_id = body.get("notif_id")
+
+    if action in _DESTRUCTIVE and not confirm:
+        # HARD RULE: nothing destructive runs without an explicit confirm flag.
+        raise HTTPException(status_code=400, detail="confirmation required")
+
+    result: dict = {"ok": True}
+    if action == "update_ytdlp":
+        ok, msg = health.update_ytdlp(lambda m: events.job_progress("update", m, 0.5))
+        result = {"ok": ok, "message": msg, "restart_required": ok}
+    elif action == "swap_channel":
+        a_id, b_id = int(args["deactivate_id"]), int(args["activate_id"])
+        db.swap_channels(a_id, b_id)
+        db.set_int_state("rotation_index", 0)  # rotation re-derives from active set
+        events.schedule_changed(swapped=True)
+        result = {"ok": True, "deactivated": a_id, "activated": b_id}
+    elif action == "apply_prompt_tune":
+        line = str(args.get("line", ""))
+        _apply_topic_prompt(args.get("topic"), line)
+        _log_auto({"action": "apply_prompt_tune", "topic": args.get("topic"), "line": line})
+        result = {"ok": True, "applied": True}
+    elif action in ("cleanup_sources", "cleanup_stale"):
+        ids = args.get("video_ids")
+        freed = _cleanup_sources(ids)
+        _log_auto({"action": action, "video_ids": ids or "stale", "freed_bytes": freed})
+        result = {"ok": True, "freed_gb": round(freed / 1e9, 2), "count": len(ids or []) or None}
+    elif action == "run_daily":
+        if not runner.start("daily", jobmod.daily_job):
+            raise HTTPException(status_code=409, detail="A job is already running")
+        result = {"ok": True, "started": True}
+    elif action == "reduce_quota":
+        c = cfg.get_config()
+        new_q = max(1, int(c.get("job.daily_quota", 4)) - 1)
+        c.raw.setdefault("job", {})["daily_quota"] = new_q
+        db.set_state("ov.job.daily_quota", str(new_q))
+        result = {"ok": True, "quota": new_q}
+    elif action == "prestage_retry":
+        _try_prestage()
+        result = {"ok": True, "started": True}
+    elif action == "dismiss":
+        result = {"ok": True}
+    elif action == "nav":
+        result = {"ok": True, "to": args.get("to", "/")}
+    else:
+        raise HTTPException(status_code=404, detail="unknown action")
+
+    if notif_id:
+        db.mark_notification_read(int(notif_id), acted=True)
+    return JSONResponse(result)
+
+
+def _apply_topic_prompt(topic: str, line: str) -> None:
+    if not topic or not line:
+        return
+    cur = db.get_state(f"topic_prompt:{topic}", "") or ""
+    db.set_state(f"topic_prompt:{topic}", (cur + ("\n" if cur else "") + line))
+
+
+def _cleanup_sources(video_ids: list | None) -> int:
+    """Delete resolved source files for the given (or all stale reviewed) videos."""
+    if not video_ids:
+        # stale reviewed sources: > cleanup_days, all clips reviewed
+        c = cfg.get_config()
+        cutoff = (datetime.now() - timedelta(days=int(c.get("review.cleanup_days", 7) or 7))).isoformat(timespec="seconds")
+        video_ids = [v["video_id"] for v in db.query(
+            "SELECT DISTINCT v.video_id FROM videos v JOIN clips c ON c.video_id=v.video_id "
+            "WHERE v.used_at IS NOT NULL AND v.used_at<=? "
+            "AND NOT EXISTS (SELECT 1 FROM clips x WHERE x.video_id=v.video_id AND x.revised_at IS NULL AND x.status='pending')",
+            (cutoff,))]
+    freed = 0
+    for vid in video_ids or []:
+        src = downloader.resolve_source(vid)
+        if src and Path(src).is_file():
+            freed += Path(src).stat().st_size
+            try:
+                Path(src).unlink()
+                Path(src).with_suffix(".16k.wav").unlink(missing_ok=True)
+            except OSError:
+                pass
+    return freed
+
+
+# --- clip review decisions (Keep / Discard / Fill) --------------------------
+@app.post("/api/clips/{clip_id}/keep")
+def api_clip_keep(clip_id: int):
+    clip = db.get_clip(clip_id)
+    if not clip:
+        raise HTTPException(status_code=404, detail="no such clip")
+    if clip["status"] == "discarded":
+        raise HTTPException(status_code=409, detail="clip discarded")
+    db.approve_clip(clip_id)
+    newpath = cutter.move_to_approved(clip["path"])
+    if newpath:
+        db.execute("UPDATE clips SET path=? WHERE id=?", (str(newpath), clip_id))
+    return JSONResponse({"ok": True, "id": clip_id, "status": "approved"})
+
+
+@app.post("/api/clips/{clip_id}/discard")
+async def api_clip_discard(clip_id: int, request: Request):
+    body = await request.json()
+    if not bool(body.get("confirm")):  # HARD RULE: discard needs explicit confirm
+        raise HTTPException(status_code=400, detail="confirmation required")
+    clip = db.get_clip(clip_id)
+    if not clip:
+        raise HTTPException(status_code=404, detail="no such clip")
+    if clip["path"]:
+        try:
+            Path(clip["path"]).unlink(missing_ok=True)
+        except OSError:
+            pass
+    db.discard_clip(clip_id)   # video stays 'used'; quota is NOT refunded
+    return JSONResponse({"ok": True, "id": clip_id, "status": "discarded",
+                         "quota": int(cfg.get_config().get("job.daily_quota", 4))})
+
+
+@app.get("/api/fill-candidate")
+def api_fill_candidate():
+    """A staged video available to fill a slot, if quota not yet met."""
+    quota = int(cfg.get_config().get("job.daily_quota", 4))
+    if db.clips_today() >= quota:
+        return JSONResponse({"available": False, "reason": "quota met"})
+    for st in db.staged_videos():
+        return JSONResponse({"available": True, "video_id": st["video_id"],
+                             "channel_id": st["channel_id"]})
+    return JSONResponse({"available": False, "reason": "no staged videos — pre-staging will run tonight"})
+
+
+@app.post("/api/fill-slot")
+async def api_fill_slot(request: Request):
+    body = await request.json() if await request.body() else {}
+    video_id = body.get("video_id")
+    quota = int(cfg.get_config().get("job.daily_quota", 4))
+    if db.clips_today() >= quota:
+        raise HTTPException(status_code=400, detail="quota already met")
+    if not video_id:
+        raise HTTPException(status_code=400, detail="video_id required")
+    vrow = db.video_with_channel(video_id)
+    if not vrow or vrow["status"] != "staged":
+        raise HTTPException(status_code=400, detail="video not staged")
+    channel = {"id": vrow["channel_id"], "title": vrow["channel_title"], "topic": vrow["topic"]}
+
+    def _run(log):
+        return jobmod.process_video(video_id, channel, None, log, staged=True,
+                                    output_mode=db.get_state("output_mode", "mp4"))
+
+    if not runner.start("fill", _run):
+        raise HTTPException(status_code=409, detail="A job is already running")
+    return JSONResponse({"started": True, "video_id": video_id})
+
+
+@app.post("/api/channels/{channel_id}/swap")
+async def api_swap_channel(channel_id: int, request: Request):
+    """One-click [Swap] from a yield suggestion. Activates a stored candidate."""
+    body = await request.json() if await request.body() else {}
+    activate_id = _to_int(body.get("activate_id"))
+    if not activate_id:
+        raise HTTPException(status_code=400, detail="activate_id required")
+    old = db.query_one("SELECT * FROM channels WHERE id=?", (channel_id,))
+    new = db.query_one("SELECT * FROM channels WHERE id=?", (activate_id,))
+    if not old or not new:
+        raise HTTPException(status_code=404, detail="unknown channel")
+    db.swap_channels(int(channel_id), int(activate_id))
+    db.set_int_state("rotation_index", 0)
+    events.schedule_changed(swapped=True)
+    return JSONResponse({"ok": True, "deactivated": old["title"], "activated": new["title"]})
+
+
+@app.get("/api/prestaging")
+def api_prestaging():
+    """Tonight's plan: staged videos + candidate window counts."""
+    out = []
+    for st in db.staged_videos():
+        windows = len(analyzer.cached_windows(st["video_id"])) if hasattr(analyzer, "cached_windows") else 0
+        out.append({"video_id": st["video_id"], "title": st["title"], "topic": st["topic"],
+                    "channel_id": st["channel_id"], "channel_title": st["channel_title"],
+                    "duration_s": st["duration_s"], "thumbnail": st["thumbnail"],
+                    "windows": windows})
+    return JSONResponse({"staged": out})
+
+
+@app.post("/api/prestaging/swap")
+async def api_prestage_swap(request: Request):
+    """[Swap] on tonight's plan: replace a staged video with the next-best candidate."""
+    body = await request.json()
+    channel_id = _to_int(body.get("channel_id"))
+    drop_id = str(body.get("video_id") or "")
+    if not channel_id:
+        raise HTTPException(status_code=400, detail="channel_id required")
+    ch = db.query_one("SELECT * FROM channels WHERE id=?", (channel_id,))
+    if not ch:
+        raise HTTPException(status_code=404, detail="unknown channel")
+    if drop_id:
+        _drop_staged(drop_id)
+    # next-best not-yet-known video for that channel
+    picked = selector.pick_video(dict(ch))
+    if picked:
+        from . import prestaging as _ps
+        _ps._stage_channel(dict(ch), lambda *_a: None)
+    return JSONResponse({"ok": True, "dropped": drop_id or None})
+
+
+def _drop_staged(video_id: str) -> None:
+    src = downloader.resolve_source(video_id)
+    if src:
+        try:
+            Path(src).unlink(missing_ok=True)
+        except OSError:
+            pass
+    db.delete_video(video_id)
+
+
+# --- schedule toggle --------------------------------------------------------
+@app.post("/api/schedule")
+async def api_schedule(request: Request):
+    body = await request.json()
+    enabled = bool(body.get("enabled"))
+    c = cfg.get_config()
+    c.raw.setdefault("schedule", {})["enabled"] = enabled
+    db.set_state("ov.schedule.enabled", "true" if enabled else "false")
+    sched_mod.scheduler.apply_schedule()
+    events.schedule_changed(enabled=enabled, next_run=sched_mod.scheduler.next_run_iso())
+    return JSONResponse({"ok": True, "enabled": enabled,
+                         "next_run": sched_mod.scheduler.next_run_iso()})
 
 
 @app.get("/clips", response_class=HTMLResponse)
@@ -509,6 +928,7 @@ def settings(request: Request):
         clip_length=c.get("clip.length_s", 60),
         face_tracking=c.get("clip.face_tracking"),
         agent=_agent_ctx(c),
+        proactive=_proactive_ctx(c),
         capcut=capcut_export.detect_draft_root(),
         capcut_version=capcut_export.VERSION_NOTE,
         output_mode=db.get_state("output_mode", "mp4"),
@@ -543,19 +963,47 @@ def settings_save(
     default_prompt: str = Form(""),
     agent_model: str = Form("google/gemini-2.5-flash"),
     agent_enabled: str = Form("off"), agent_vision: str = Form("off"),
+    schedule_time: str = Form("06:00"), schedule_enabled: str = Form("off"),
+    prestaging_enabled: str = Form("off"), hours_before: str = Form("10"),
+    review_mode: str = Form("manual"), auto_approve_hours: str = Form("24"),
+    cleanup_days: str = Form("7"),
+    webhook_url: str = Form(""), telegram_bot_token: str = Form(""),
+    telegram_chat_id: str = Form(""),
 ):
     _persist_settings(text_model, vision_model, whisper_model, daily_quota,
                       clip_length, face_tracking, default_prompt,
                       agent_model=agent_model, agent_enabled=agent_enabled,
-                      agent_vision=agent_vision)
+                      agent_vision=agent_vision,
+                      schedule_time=schedule_time, schedule_enabled=schedule_enabled,
+                      prestaging_enabled=prestaging_enabled, hours_before=hours_before,
+                      review_mode=review_mode, auto_approve_hours=auto_approve_hours,
+                      cleanup_days=cleanup_days, webhook_url=webhook_url,
+                      telegram_bot_token=telegram_bot_token,
+                      telegram_chat_id=telegram_chat_id)
     c = cfg.get_config()
     return TEMPLATES.TemplateResponse(request, "settings.html", base_ctx(
         request, cfg_models={"text": c.get("openrouter.models.text"),
                              "vision": c.get("openrouter.models.vision")},
         whisper_model=c.get("whisper.model"), face_tracking=c.get("clip.face_tracking"),
-        clip_length=c.get("clip.length_s"), agent=_agent_ctx(c),
+        clip_length=c.get("clip.length_s"), agent=_agent_ctx(c), proactive=_proactive_ctx(c),
         has_key=bool(c.openrouter_api_key),
         test_result="Settings saved.", active="settings"))
+
+
+def _proactive_ctx(c) -> dict:
+    return {
+        "schedule_enabled": bool(c.get("schedule.enabled", True)),
+        "time": c.get("schedule.time", "06:00"),
+        "catch_up": bool(c.get("schedule.catch_up", True)),
+        "prestage_enabled": bool(c.get("prestaging.enabled", True)),
+        "hours_before": int(c.get("prestaging.hours_before", 10)),
+        "review_mode": c.get("review.mode", "manual"),
+        "auto_approve_hours": int(c.get("review.auto_approve_hours", 24)),
+        "cleanup_days": int(c.get("review.cleanup_days", 7)),
+        "webhook_url": c.get("notifications.webhook_url", "") or "",
+        "telegram_bot_token": c.get("notifications.telegram_bot_token", "") or "",
+        "telegram_chat_id": c.get("notifications.telegram_chat_id", "") or "",
+    }
 
 
 @app.post("/settings/test_key")
@@ -565,18 +1013,27 @@ def settings_test_key():
     return JSONResponse({"ok": ok, "message": msg})
 
 
+@app.post("/settings/test_notification")
+def settings_test_notification():
+    ok, msg = notifier.test_message()
+    return JSONResponse({"ok": ok, "message": msg})
+
+
 def _persist_settings(text_model, vision_model, whisper_model, daily_quota,
                       clip_length, face_tracking, default_prompt,
                       agent_model="google/gemini-2.5-flash", agent_enabled="on",
-                      agent_vision="") -> None:
-    """Write model/quota/clip/prompt/agent overrides into config + DB state (§11.8).
-
-    config.yaml stays the source of defaults; runtime overrides win at read time
-    and persist across restarts via the state table.
-    """
+                      agent_vision="", schedule_time="06:00", schedule_enabled="off",
+                      prestaging_enabled="off", hours_before="10", review_mode="manual",
+                      auto_approve_hours="24", cleanup_days="7", webhook_url="",
+                      telegram_bot_token="", telegram_chat_id="") -> None:
+    """Write model/quota/clip/prompt/agent/schedule/review/notification overrides
+    into config + DB state (§11.8). config.yaml stays the source of defaults;
+    runtime overrides win at read time and persist across restarts."""
     c = cfg.get_config()
     enabled = "on" if (agent_enabled in ("on", "true", "1")) else "off"
     vision = "on" if (agent_vision in ("on", "true", "1")) else "off"
+    sched_on = "on" if (schedule_enabled in ("on", "true", "1")) else "off"
+    pre_on = "on" if (prestaging_enabled in ("on", "true", "1")) else "off"
     c.raw.setdefault("openrouter", {}).setdefault("models", {})
     c.raw["openrouter"]["models"]["text"] = text_model
     c.raw["openrouter"]["models"]["vision"] = vision_model
@@ -588,6 +1045,20 @@ def _persist_settings(text_model, vision_model, whisper_model, daily_quota,
     ag["model"] = agent_model or "google/gemini-2.5-flash"
     ag["enabled"] = enabled == "on"
     ag["vision_enabled"] = vision == "on"
+    sc = c.raw.setdefault("schedule", {})
+    sc["enabled"] = sched_on == "on"
+    sc["time"] = schedule_time or "06:00"
+    ps = c.raw.setdefault("prestaging", {})
+    ps["enabled"] = pre_on == "on"
+    ps["hours_before"] = int(float(hours_before or 10))
+    rv = c.raw.setdefault("review", {})
+    rv["mode"] = "auto" if review_mode == "auto" else "manual"
+    rv["auto_approve_hours"] = int(float(auto_approve_hours or 24))
+    rv["cleanup_days"] = int(float(cleanup_days or 7))
+    nt = c.raw.setdefault("notifications", {})
+    nt["webhook_url"] = webhook_url.strip()
+    nt["telegram_bot_token"] = telegram_bot_token.strip()
+    nt["telegram_chat_id"] = telegram_chat_id.strip()
     overrides = {
         "ov.openrouter.models.text": text_model,
         "ov.openrouter.models.vision": vision_model,
@@ -598,6 +1069,16 @@ def _persist_settings(text_model, vision_model, whisper_model, daily_quota,
         "ov.agent.model": ag["model"],
         "ov.agent.enabled": "true" if ag["enabled"] else "false",
         "ov.agent.vision_enabled": "true" if ag["vision_enabled"] else "false",
+        "ov.schedule.enabled": "true" if sc["enabled"] else "false",
+        "ov.schedule.time": sc["time"],
+        "ov.prestaging.enabled": "true" if ps["enabled"] else "false",
+        "ov.prestaging.hours_before": str(ps["hours_before"]),
+        "ov.review.mode": rv["mode"],
+        "ov.review.auto_approve_hours": str(rv["auto_approve_hours"]),
+        "ov.review.cleanup_days": str(rv["cleanup_days"]),
+        "ov.notifications.webhook_url": nt["webhook_url"],
+        "ov.notifications.telegram_bot_token": nt["telegram_bot_token"],
+        "ov.notifications.telegram_chat_id": nt["telegram_chat_id"],
     }
     for k, v in overrides.items():
         db.set_state(k, str(v))
@@ -605,6 +1086,7 @@ def _persist_settings(text_model, vision_model, whisper_model, daily_quota,
         db.set_state("default_prompt", default_prompt.strip())
     else:
         db.set_state("default_prompt", "")
+    sched_mod.scheduler.apply_schedule()   # honour new time / enabled immediately
 
 
 def apply_state_overlays() -> None:
@@ -620,6 +1102,16 @@ def apply_state_overlays() -> None:
         "ov.agent.model": ["agent", "model"],
         "ov.agent.enabled": ["agent", "enabled"],
         "ov.agent.vision_enabled": ["agent", "vision_enabled"],
+        "ov.schedule.enabled": ["schedule", "enabled"],
+        "ov.schedule.time": ["schedule", "time"],
+        "ov.prestaging.enabled": ["prestaging", "enabled"],
+        "ov.prestaging.hours_before": ["prestaging", "hours_before"],
+        "ov.review.mode": ["review", "mode"],
+        "ov.review.auto_approve_hours": ["review", "auto_approve_hours"],
+        "ov.review.cleanup_days": ["review", "cleanup_days"],
+        "ov.notifications.webhook_url": ["notifications", "webhook_url"],
+        "ov.notifications.telegram_bot_token": ["notifications", "telegram_bot_token"],
+        "ov.notifications.telegram_chat_id": ["notifications", "telegram_chat_id"],
     }
     for key, path in mapping.items():
         val = db.get_state(key)
@@ -629,7 +1121,8 @@ def apply_state_overlays() -> None:
         for p in path[:-1]:
             node = node.setdefault(p, {})
         last = path[-1]
-        if last in ("daily_quota", "length_s"):
+        if last in ("daily_quota", "length_s", "hours_before", "auto_approve_hours",
+                    "cleanup_days"):
             try:
                 node[last] = int(float(val))
             except (TypeError, ValueError):

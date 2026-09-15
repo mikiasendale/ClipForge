@@ -67,13 +67,26 @@ def ytdlp_json(args: list[str], timeout: int = 60) -> dict | None:
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except (subprocess.TimeoutExpired, OSError):
+        _metric(False)
         return None
     if proc.returncode != 0 or not proc.stdout.strip():
+        _metric(False)
         return None
     try:
-        return json.loads(proc.stdout)
+        out = json.loads(proc.stdout)
     except json.JSONDecodeError:
+        _metric(False)
         return None
+    _metric(True)
+    return out
+
+
+def _metric(success: bool) -> None:
+    try:
+        from . import db
+        db.metrics_bump("ytdlp", success)
+    except Exception:  # noqa: BLE001 - metrics must never break discovery
+        pass
 
 
 # --- search -----------------------------------------------------------------

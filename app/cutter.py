@@ -382,6 +382,39 @@ def review_path_for(video_id: str) -> Path:
     return d / f"review_{safe}_{stamp}.mp4"
 
 
+def move_to_approved(path: str | None) -> Path | None:
+    """Keep: move a rendered clip into data/output/approved/{date}/ (idempotent).
+
+    Returns the new path, or None if nothing moved (missing file / already there).
+    """
+    import shutil
+    if not path:
+        return None
+    src = Path(path)
+    if not src.is_file() or "approved" in src.parts:
+        return None
+    day = datetime.now().strftime("%Y-%m-%d")
+    dest_dir = cfg.OUTPUT_DIR / "approved" / day
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / src.name
+    n = 2
+    while dest.exists():
+        dest = dest_dir / f"{src.stem}_{n}{src.suffix}"
+        n += 1
+    try:
+        shutil.move(str(src), str(dest))
+    except OSError:
+        return None
+    # keep any sidecar .ass next to the moved file
+    ass = src.with_suffix(".ass")
+    if ass.is_file():
+        try:
+            shutil.move(str(ass), str(dest.with_suffix(".ass")))
+        except OSError:
+            pass
+    return dest
+
+
 def render_clip(src: Path, s: float, e: float, out_path: Path, words=None) -> Path | None:
     """Render one 9:16 clip. Chooses tracked vs center crop per config (§8)."""
     c = cfg.get_config()

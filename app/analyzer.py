@@ -364,6 +364,7 @@ def analyze(video: Path, topic: str, mode: str, video_id: str | None = None) -> 
             int(a.get("visual_candidates", 6)),
             scene_starts=scenes, rms_n=np.asarray(rms_list or [], dtype="float32"),
         )
+        _cache_windows(video_id, windows)
         return Analysis("visual", duration_s, words, windows)
 
     windows = speech_windows(
@@ -371,4 +372,19 @@ def analyze(video: Path, topic: str, mode: str, video_id: str | None = None) -> 
         float(a.get("speech_step_s", 15)),
         int(a.get("speech_top_candidates", 6)),
     )
+    _cache_windows(video_id, windows)
     return Analysis("speech", duration_s, words, windows)
+
+
+def _cache_windows(video_id: str | None, windows: list["Window"]) -> None:
+    if not video_id:
+        return
+    meta = _cache_load(video_id)
+    meta["windows"] = [[w.start, w.end, round(w.score, 4)] for w in windows]
+    _cache_save(video_id, meta)
+
+
+def cached_windows(video_id: str | None) -> list["Window"]:
+    """Candidate windows from the analysis cache (empty if not staged/analyzed)."""
+    meta = _cache_load(video_id) if video_id else {}
+    return [Window(float(a), float(b), float(s)) for a, b, s in meta.get("windows", [])]

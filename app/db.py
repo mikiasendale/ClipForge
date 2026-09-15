@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS channels (
     video_count         INTEGER,
     joined_year         INTEGER,
     avatar_url          TEXT,
-    added_at            TEXT NOT NULL
+    added_at            TEXT NOT NULL,
+    is_active           INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS videos (
@@ -39,6 +40,7 @@ CREATE TABLE IF NOT EXISTS videos (
     duration_s  REAL,
     views       INTEGER,
     upload_date TEXT,
+    thumbnail   TEXT,
     status      TEXT NOT NULL DEFAULT 'pending',
     used_at     TEXT
 );
@@ -58,6 +60,8 @@ CREATE TABLE IF NOT EXISTS clips (
     render_mode   TEXT NOT NULL DEFAULT 'mp4',
     draft_path    TEXT,
     hook_title    TEXT,
+    status        TEXT NOT NULL DEFAULT 'pending',
+    approved_at   TEXT,
     revised_at    TEXT,
     parent_clip_id INTEGER REFERENCES clips(id),
     created_at    TEXT NOT NULL
@@ -68,6 +72,20 @@ CREATE TABLE IF NOT EXISTS state (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT NOT NULL,
+    severity    TEXT NOT NULL DEFAULT 'info',
+    title       TEXT NOT NULL,
+    body        TEXT,
+    actions_json TEXT,
+    created_at  TEXT NOT NULL,
+    read_at     TEXT,
+    acted_at    TEXT,
+    dedupe_key  TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_notif_created ON notifications(created_at);
 """
 
 
@@ -77,6 +95,17 @@ _CLIP_MIGRATIONS = [
     ("revised_at", "TEXT"),
     ("parent_clip_id", "INTEGER REFERENCES clips(id)"),
     ("hook_title", "TEXT"),
+    ("render_mode", "TEXT NOT NULL DEFAULT 'mp4'"),
+    ("draft_path", "TEXT"),
+    ("status", "TEXT NOT NULL DEFAULT 'pending'"),
+    ("approved_at", "TEXT"),
+]
+_CHANNEL_MIGRATIONS = [
+    ("is_active", "INTEGER NOT NULL DEFAULT 1"),
+]
+_VIDEO_MIGRATIONS = [
+    ("thumbnail", "TEXT"),
+    ("staged_at", "TEXT"),
 ]
 
 
@@ -107,11 +136,16 @@ def init_db(db_path: Path | str | None = None) -> None:
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    """Add clips columns introduced after the baseline, if missing."""
-    have = {r["name"] for r in conn.execute("PRAGMA table_info(clips)").fetchall()}
-    for col, decl in _CLIP_MIGRATIONS:
-        if col not in have:
-            conn.execute(f"ALTER TABLE clips ADD COLUMN {col} {decl}")
+    """Add columns introduced after the baseline, if missing."""
+    for table, migrations in (
+        ("clips", _CLIP_MIGRATIONS),
+        ("channels", _CHANNEL_MIGRATIONS),
+        ("videos", _VIDEO_MIGRATIONS),
+    ):
+        have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for col, decl in migrations:
+            if col not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
 
 
 def query(sql: str, params: Iterable[Any] = (), db_path: Path | str | None = None) -> list[sqlite3.Row]:
@@ -142,24 +176,26 @@ def execute(sql: str, params: Iterable[Any] = (), db_path: Path | str | None = N
 # --- channels ---------------------------------------------------------------
 def add_channel(platform_channel_id: str, title: str, topic: str, subtopic: str | None,
                 subs: int | None, video_count: int | None, joined_year: int | None,
-                avatar_url: str | None, db_path: Path | str | None = None) -> int:
+                avatar_url: str | None, db_path: Path | str | None = None,
+                *, is_active: int = 1) -> int:
     existing = query_one(
         "SELECT id FROM channels WHERE platform_channel_id=?", (platform_channel_id,), db_path
     )
     if existing:
         execute(
             """UPDATE channels SET title=?, topic=?, subtopic=?, subs=?, video_count=?,
-                      joined_year=?, avatar_url=? WHERE id=?""",
-            (title, topic, subtopic, subs, video_count, joined_year, avatar_url, existing["id"]),
+                      joined_year=?, avatar_url=?, is_active=? WHERE id=?""",
+            (title, topic, subtopic, subs, video_count, joined_year, avatar_url,
+             int(is_active), existing["id"]),
             db_path,
         )
         return existing["id"]
     return execute(
         """INSERT INTO channels(platform_channel_id, title, topic, subtopic, subs, video_count,
-                                joined_year, avatar_url, added_at)
-           VALUES(?,?,?,?,?,?,?,?,?)""",
+                                joined_year, avatar_url, added_at, is_active)
+           VALUES(?,?,?,?,?,?,?,?,?,?)""",
         (platform_channel_id, title, topic, subtopic, subs, video_count, joined_year,
-         avatar_url, now_iso()),
+         avatar_url, now_iso(), int(is_active)),
         db_path,
     )
 
@@ -168,23 +204,45 @@ def all_channels(db_path: Path | str | None = None) -> list[sqlite3.Row]:
     return query("SELECT * FROM channels ORDER BY topic, id", (), db_path)
 
 
-def channels_by_topic(topic: str, db_path: Path | str | None = None) -> list[sqlite3.Row]:
-    return query("SELECT * FROM channels WHERE topic=? ORDER BY id", (topic,), db_path)
+def active_channels(db_path: Path | str | None = None) -> list[sqlite3.Row]:
+    return query("SELECT * FROM channels WHERE is_active=1 ORDER BY topic, id", (), db_path)
 
 
-def channel_count(db_path: Path | str | None = None) -> int:
-    row = query_one("SELECT COUNT(*) AS c FROM channels", (), db_path)
+def channels_by_topic(topic: str, only_active: bool = False,
+                      db_path: Path | str | None = None) -> list[sqlite3.Row]:
+    sql = "SELECT * FROM channels WHERE topic=?"
+    if only_active:
+        sql += " AND is_active=1"
+    return query(sql + " ORDER BY id", (topic,), db_path)
+
+
+def set_channel_active(channel_id: int, active: bool, db_path: Path | str | None = None) -> None:
+    execute("UPDATE channels SET is_active=? WHERE id=?", (1 if active else 0, channel_id), db_path)
+
+
+def swap_channels(deactivate_id: int, activate_id: int, db_path: Path | str | None = None) -> None:
+    """Deactivate one channel, activate its replacement (suggestion [Swap])."""
+    set_channel_active(deactivate_id, False, db_path)
+    set_channel_active(activate_id, True, db_path)
+
+
+def channel_count(only_active: bool = True, db_path: Path | str | None = None) -> int:
+    sql = "SELECT COUNT(*) AS c FROM channels"
+    if only_active:
+        sql += " WHERE is_active=1"
+    row = query_one(sql, (), db_path)
     return int(row["c"]) if row else 0
 
 
 # --- videos -----------------------------------------------------------------
 def insert_video(video_id: str, channel_id: int, title: str | None, duration_s: float | None,
-                 views: int | None, upload_date: str | None, db_path: Path | str | None = None) -> None:
+                 views: int | None, upload_date: str | None, db_path: Path | str | None = None,
+                 *, status: str = "pending", thumbnail: str | None = None) -> None:
     execute(
         """INSERT OR REPLACE INTO videos(video_id, channel_id, title, duration_s, views,
-                                         upload_date, status, used_at)
-           VALUES(?,?,?,?,?,?,'pending',NULL)""",
-        (video_id, channel_id, title, duration_s, views, upload_date, ),
+                                         upload_date, thumbnail, status, used_at)
+           VALUES(?,?,?,?,?,?,?,?,NULL)""",
+        (video_id, channel_id, title, duration_s, views, upload_date, thumbnail, status),
         db_path,
     )
 
@@ -208,12 +266,53 @@ def known_video_ids(db_path: Path | str | None = None) -> set[str]:
 
 def video_with_channel(video_id: str, db_path: Path | str | None = None) -> sqlite3.Row | None:
     return query_one(
-        """SELECT v.video_id, v.title, v.duration_s, v.status, v.channel_id,
+        """SELECT v.video_id, v.title, v.duration_s, v.status, v.thumbnail, v.channel_id,
                   c.title AS channel_title, c.topic
            FROM videos v JOIN channels c ON c.id = v.channel_id
            WHERE v.video_id=?""",
         (video_id,), db_path,
     )
+
+
+def staged_videos(db_path: Path | str | None = None) -> list[sqlite3.Row]:
+    return query(
+        """SELECT v.video_id, v.title, v.duration_s, v.thumbnail, v.channel_id,
+                  v.upload_date, c.title AS channel_title, c.topic
+           FROM videos v JOIN channels c ON c.id=v.channel_id
+           WHERE v.status='staged' ORDER BY v.upload_date DESC""",
+        (), db_path,
+    )
+
+
+def staged_for_channel(channel_id: int, db_path: Path | str | None = None) -> sqlite3.Row | None:
+    return query_one(
+        "SELECT * FROM videos WHERE channel_id=? AND status='staged' ORDER BY views DESC LIMIT 1",
+        (channel_id,), db_path,
+    )
+
+
+def mark_video_staged(video_id: str, thumbnail: str | None = None,
+                      db_path: Path | str | None = None) -> None:
+    execute("UPDATE videos SET status='staged', staged_at=?, thumbnail=COALESCE(?, thumbnail) "
+            "WHERE video_id=?", (now_iso(), thumbnail, video_id), db_path)
+
+
+def stale_staged_ids(days: int, db_path: Path | str | None = None) -> list[str]:
+    cutoff = _days_ago_iso(days)
+    rows = query(
+        "SELECT video_id FROM videos WHERE status='staged' AND staged_at IS NOT NULL AND staged_at < ?",
+        (cutoff,), db_path)
+    return [r["video_id"] for r in rows]
+
+
+def delete_video(video_id: str, db_path: Path | str | None = None) -> None:
+    """Hard-delete a staged row (pre-staging purge; never touches used rows)."""
+    execute("DELETE FROM videos WHERE video_id=? AND used_at IS NULL", (video_id,), db_path)
+
+
+def _days_ago_iso(days: int) -> str:
+    from datetime import timedelta
+    return (datetime.now(timezone.utc).astimezone() - timedelta(days=days)).isoformat(timespec="seconds")
 
 
 # --- clips ------------------------------------------------------------------
@@ -261,6 +360,47 @@ def mark_clip_revised(clip_id: int, db_path: Path | str | None = None) -> None:
     execute("UPDATE clips SET revised_at=? WHERE id=?", (now_iso(), clip_id), db_path)
 
 
+def set_clip_status(clip_id: int, status: str, db_path: Path | str | None = None) -> None:
+    """approved | discarded (review decisions). Never refunds video quota."""
+    execute("UPDATE clips SET status=? WHERE id=?", (status, clip_id), db_path)
+
+
+def approve_clip(clip_id: int, db_path: Path | str | None = None) -> None:
+    execute("UPDATE clips SET status='approved', approved_at=? WHERE id=?",
+            (now_iso(), clip_id), db_path)
+
+
+def discard_clip(clip_id: int, db_path: Path | str | None = None) -> None:
+    execute("UPDATE clips SET status='discarded' WHERE id=?", (clip_id,), db_path)
+
+
+def unreviewed_clips(older_than_hours: float | None = None,
+                     db_path: Path | str | None = None) -> list[sqlite3.Row]:
+    sql = ("SELECT c.*, v.title AS video_title FROM clips c "
+           "JOIN videos v ON v.video_id=c.video_id "
+           "WHERE c.revised_at IS NULL AND c.status='pending'")
+    params: list[Any] = []
+    if older_than_hours is not None:
+        cutoff = _hours_ago_iso(older_than_hours)
+        sql += " AND c.created_at <= ?"
+        params.append(cutoff)
+    return query(sql + " ORDER BY c.created_at ASC", params, db_path)
+
+
+def clips_by_date(day: str, db_path: Path | str | None = None) -> list[sqlite3.Row]:
+    return query("SELECT * FROM clips WHERE substr(created_at,1,10)=? AND revised_at IS NULL "
+                 "ORDER BY created_at ASC", (day,), db_path)
+
+
+def last_run_date(db_path: Path | str | None = None) -> str | None:
+    return get_state("last_run_date", None, db_path)
+
+
+def _hours_ago_iso(hours: float) -> str:
+    from datetime import timedelta
+    return (datetime.now(timezone.utc).astimezone() - timedelta(hours=hours)).isoformat(timespec="seconds")
+
+
 def clips_today(db_path: Path | str | None = None) -> int:
     today = datetime.now().date().isoformat()
     row = query_one(
@@ -294,7 +434,104 @@ def set_int_state(key: str, value: int, db_path: Path | str | None = None) -> No
     set_state(key, str(value), db_path)
 
 
+# --- rolling metrics (per-day counters for health checks) -------------------
+def metrics_bump(name: str, success: bool, db_path: Path | str | None = None) -> None:
+    """Increment a per-day ok/fail counter (yt-dlp, openrouter)."""
+    import json
+    today = datetime.now().date().isoformat()
+    raw = get_state("metrics", "{}", db_path)
+    try:
+        m = json.loads(raw)
+    except json.JSONDecodeError:
+        m = {}
+    if m.get("day") != today:
+        m = {"day": today, "counters": {}}
+    counters = m.setdefault("counters", {})
+    slot = counters.setdefault(name, {"ok": 0, "fail": 0})
+    slot["ok" if success else "fail"] = slot.get("ok" if success else "fail", 0) + 1
+    if success:
+        slot["consec_fail"] = 0
+    else:
+        slot["consec_fail"] = slot.get("consec_fail", 0) + 1
+    set_state("metrics", json.dumps(m), db_path)
+
+
+def metrics_snapshot(db_path: Path | str | None = None) -> dict:
+    import json
+    raw = get_state("metrics", "{}", db_path)
+    try:
+        m = json.loads(raw)
+    except json.JSONDecodeError:
+        m = {}
+    if m.get("day") != datetime.now().date().isoformat():
+        return {"day": datetime.now().date().isoformat(), "counters": {}}
+    return m
+
+
+def metric(name: str, db_path: Path | str | None = None) -> dict:
+    return metrics_snapshot(db_path).get("counters", {}).get(name, {"ok": 0, "fail": 0, "consec_fail": 0})
+
+
 # --- reset helpers (tests / crash recovery) ---------------------------------
 def reset_run_state(db_path: Path | str | None = None) -> None:
     """Clear any in-flight job markers left behind by a crash (spec §11.7)."""
     execute("DELETE FROM state WHERE key='job_active'", (), db_path)
+
+
+# --- notifications ----------------------------------------------------------
+def insert_notification(kind: str, severity: str, title: str, body: str | None,
+                        actions_json: str | None, dedupe_key: str | None,
+                        db_path: Path | str | None = None) -> int | None:
+    """Insert (or refresh an aged-out duplicate) notification; returns its row id.
+
+    Dedup-within-window is enforced by notifier via dedupe_seen(); this upsert
+    keeps history and refreshes the card in place when a keyed notification
+    re-fires after its window, so the UNIQUE(dedupe_key) never hard-blocks it.
+    """
+    ts = now_iso()
+    if dedupe_key is None:
+        return execute(
+            """INSERT INTO notifications(kind, severity, title, body, actions_json,
+                                         created_at) VALUES(?,?,?,?,?,?)""",
+            (kind, severity, title, body, actions_json, ts), db_path)
+    execute(
+        """INSERT INTO notifications(kind, severity, title, body, actions_json,
+                                     created_at, dedupe_key)
+           VALUES(?,?,?,?,?,?,?)
+           ON CONFLICT(dedupe_key) DO UPDATE SET
+             kind=excluded.kind, severity=excluded.severity, title=excluded.title,
+             body=excluded.body, actions_json=excluded.actions_json,
+             created_at=excluded.created_at, read_at=NULL, acted_at=NULL""",
+        (kind, severity, title, body, actions_json, ts, dedupe_key), db_path)
+    row = query_one("SELECT id FROM notifications WHERE dedupe_key=?", (dedupe_key,), db_path)
+    return row["id"] if row else None
+
+
+def dedupe_seen(dedupe_key: str, within_hours: float, db_path: Path | str | None = None) -> bool:
+    cutoff = _hours_ago_iso(within_hours)
+    row = query_one(
+        "SELECT id FROM notifications WHERE dedupe_key=? AND created_at>=? "
+        "ORDER BY created_at DESC LIMIT 1", (dedupe_key, cutoff), db_path)
+    return row is not None
+
+
+def list_notifications(limit: int = 50, unread_only: bool = False,
+                       db_path: Path | str | None = None) -> list[sqlite3.Row]:
+    sql = "SELECT * FROM notifications"
+    if unread_only:
+        sql += " WHERE read_at IS NULL"
+    return query(sql + " ORDER BY created_at DESC LIMIT ?", (limit,), db_path)
+
+
+def unread_count(db_path: Path | str | None = None) -> int:
+    row = query_one("SELECT COUNT(*) AS c FROM notifications WHERE read_at IS NULL", (), db_path)
+    return int(row["c"]) if row else 0
+
+
+def mark_notification_read(notif_id: int, acted: bool = False,
+                           db_path: Path | str | None = None) -> None:
+    if acted:
+        execute("UPDATE notifications SET read_at=?, acted_at=? WHERE id=?",
+                (now_iso(), now_iso(), notif_id), db_path)
+    else:
+        execute("UPDATE notifications SET read_at=? WHERE id=?", (now_iso(), notif_id), db_path)

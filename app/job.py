@@ -8,11 +8,13 @@ never double-produces (spec §11.7).
 """
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 from . import config as cfg
 from . import db, selector, downloader, analyzer, editor_ai, cutter, agent, capcut_export
+from . import events, notifier
 
 LogFn = Callable[[str], None]
 
@@ -47,9 +49,13 @@ def render_clips(video_id: str, src: Path, clips: list[dict], words, title: str,
         path = cutter.render_clip(src, cl["start_s"], cl["end_s"], out, words=words)
         if path:
             engine = cl.get("engine", "single_shot")
-            db.add_clip(video_id, cl["start_s"], cl["end_s"], str(path),
+            new_id = db.add_clip(video_id, cl["start_s"], cl["end_s"], str(path),
                         cl.get("caption"), engine, prompt_source, engine=engine,
                         hook_title=cl.get("hook_title"), render_mode="mp4")
+            events.clip_rendered({"id": new_id, "video_id": video_id, "path": str(path),
+                                  "caption": cl.get("caption"), "hook_title": cl.get("hook_title"),
+                                  "engine": engine, "render_mode": "mp4",
+                                  "start_s": cl["start_s"], "end_s": cl["end_s"]})
             log(f"    clip {i + 1}: {cl['start_s']:.0f}-{cl['end_s']:.0f}s "
                 f"[{engine}] -> {path.name}")
             paths.append(str(path))
@@ -97,10 +103,13 @@ def _single_shot(video_id: str, channel_row: dict, src: Path, topic: str,
 def process_video(video_id: str, channel_row: dict, url: str | None, log: LogFn,
                   force_n: int | None = None,
                   prompt_override: str | None = None,
-                  output_mode: str | None = None) -> list[str]:
+                  output_mode: str | None = None,
+                  staged: bool = False) -> list[str]:
     """Download -> (agent | single-shot) -> render mp4 OR export CapCut draft.
 
     output_mode: 'mp4' | 'capcut' (default: config/state 'output_mode', else mp4).
+    staged=True consumes a pre-staged row: skips download + transcribe (already
+    cached) and logs 'prestaged'.
     """
     topic = channel_row["topic"]
     channel_name = channel_row.get("title") or topic
@@ -109,21 +118,33 @@ def process_video(video_id: str, channel_row: dict, url: str | None, log: LogFn,
     if output_mode not in ("mp4", "capcut"):
         output_mode = db.get_state("output_mode", c.get("capcut.default_mode", "mp4") or "mp4")
 
-    log(f"  downloading {video_id} ({channel_name})")
-    db.set_video_status(video_id, "pending")
-    src = downloader.download(video_id, url)
-    if not src or not Path(src).is_file():
-        log("  download failed")
-        db.set_video_status(video_id, "failed")
-        return []
-    src = Path(src)
-    db.set_video_status(video_id, "downloaded")
-
-    # prefer the declared source duration (from the videos row) for quota math;
-    # fall back to probing the file if metadata is missing.
     vrow = db.query_one("SELECT duration_s FROM videos WHERE video_id=?", (video_id,))
-    duration_s = (vrow["duration_s"] if vrow and vrow["duration_s"]
-                  else analyzer.probe_duration(src, c.ffprobe)) or 600.0
+    duration_s = (vrow["duration_s"] if vrow and vrow["duration_s"] else 0) or 0
+
+    if staged:
+        src = downloader.resolve_source(video_id)
+    else:
+        src = None
+    if src and Path(src).is_file():
+        log(f"  {channel_name}: using PRESTAGED source ({Path(src).name})")
+        db.set_video_status(video_id, "analyzed")
+        duration_s = duration_s or (analyzer.probe_duration(Path(src), c.ffprobe) or 600.0)
+    else:
+        if staged:
+            log("  staged source missing; re-downloading")
+        log(f"  downloading {video_id} ({channel_name})")
+        events.job_progress("download", video_id, 0.1)
+        db.set_video_status(video_id, "pending")
+        src = downloader.download(video_id, url)
+        if not src or not Path(src).is_file():
+            log("  download failed")
+            db.set_video_status(video_id, "failed")
+            return []
+        db.set_video_status(video_id, "downloaded")
+    src = Path(src)
+
+    if not duration_s:
+        duration_s = analyzer.probe_duration(src, c.ffprobe) or 600.0
     n = force_n if force_n is not None else selector.windows_for_duration(duration_s)
     if force_n is None:
         remaining = int(c.get("job.daily_quota", 4)) - db.clips_today()
@@ -134,6 +155,7 @@ def process_video(video_id: str, channel_row: dict, url: str | None, log: LogFn,
 
     # --- selection: tool-calling agent (default) or single-shot (fallback) ---
     clips: list[dict]
+    events.job_progress("select", f"editor for {n} clip(s)", 0.4)
     if c.get("agent.enabled", True) and c.openrouter_api_key:
         log(f"  running editor AGENT for {n} clip(s)")
         clips = agent.run_agent(
@@ -211,17 +233,32 @@ def daily_job(log: LogFn = _noop, output_mode: str | None = None) -> list[str]:
             log("[run] no channels available for rotation")
             break
         tried.add(channel["id"])
-        log(f"[attempt {attempts}] channel: {channel['title']} ({channel['topic']})")
-        video = selector.pick_video(channel)
-        if not video:
-            log("  no eligible video (all seen / out of duration) — next channel")
-            continue
-        paths = process_video(video["video_id"], channel, None, log, output_mode=output_mode)
+        events.job_progress("channel", channel["title"], attempts / max_attempts)
+        staged = db.staged_for_channel(channel["id"])
+        if staged:
+            log(f"[attempt {attempts}] channel: {channel['title']} — PRESTAGED {staged['video_id']}")
+            paths = process_video(staged["video_id"], channel, None, log,
+                                  output_mode=output_mode, staged=True)
+        else:
+            log(f"[attempt {attempts}] channel: {channel['title']} ({channel['topic']})")
+            video = selector.pick_video(channel)
+            if not video:
+                log("  no eligible video (all seen / out of duration) — next channel")
+                continue
+            paths = process_video(video["video_id"], channel, None, log, output_mode=output_mode)
         produced += paths
         if not paths:
             log("  channel produced 0 clips; continuing loop with next channel")
 
-    log(f"[run] done — clips_today={db.clips_today()}")
+    made = db.clips_today()
+    log(f"[run] done — clips_today={made}")
+    events.job_progress("done", f"{made}/{quota}", 1.0)
+    if made < quota:
+        notifier.notify("quota_unmet", "warn", "Daily quota not met",
+                        f"Produced {made}/{quota} today (channels exhausted or candidates failed).",
+                        actions=[{"label": "Retry now", "action": "run_daily"},
+                                 {"label": "Reduce quota today", "action": "reduce_quota"}],
+                        dedupe_key=f"quota_unmet:{datetime.now().date()}")
     return produced
 
 

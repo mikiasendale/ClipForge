@@ -76,6 +76,37 @@
       CapCut is always manual.
     </div>
   </fieldset>
+  <fieldset class="agent-set">
+    <legend>Proactive — schedule &amp; pre-staging</legend>
+    <div class="field-row">
+      <label class="check"><input type="checkbox" name="schedule_enabled" value="on" {{ 'checked' if proactive.schedule_enabled }}> Enable daily schedule</label>
+      <label class="check"><input type="checkbox" name="prestaging_enabled" value="on" {{ 'checked' if proactive.prestage_enabled }}> Pre-stage tomorrow's work</label>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Run time (HH:MM)</label><input name="schedule_time" type="time" value="{{ proactive.time }}"></div>
+      <div class="field"><label>Hours before run to pre-stage</label><input name="hours_before" type="number" min="0" max="23" value="{{ proactive.hours_before }}"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Review mode</label>
+        <select name="review_mode">
+          <option value="manual" {{ 'selected' if proactive.review_mode != 'auto' }}>manual (I approve)</option>
+          <option value="auto" {{ 'selected' if proactive.review_mode == 'auto' }}>auto (keep after timeout)</option>
+        </select></div>
+      <div class="field"><label>Auto-approve after (h)</label><input name="auto_approve_hours" type="number" min="1" value="{{ proactive.auto_approve_hours }}"></div>
+      <div class="field"><label>Cleanup after (days)</label><input name="cleanup_days" type="number" min="1" value="{{ proactive.cleanup_days }}"></div>
+    </div>
+  </fieldset>
+  <fieldset class="agent-set">
+    <legend>Notifications <span class="muted">(blank = in-app only)</span></legend>
+    <div class="field"><label>Webhook URL <span class="muted">POST {kind,severity,title,body,source}</span></label>
+      <input name="webhook_url" value="{{ proactive.webhook_url }}" placeholder="https://…"></div>
+    <div class="field-row">
+      <div class="field"><label>Telegram bot token</label><input name="telegram_bot_token" value="{{ proactive.telegram_bot_token }}"></div>
+      <div class="field"><label>Telegram chat id</label><input name="telegram_chat_id" value="{{ proactive.telegram_chat_id }}"></div>
+    </div>
+    <button id="test-notif" class="ghost" type="button">Test notification</button>
+    <span id="notif-result" class="muted"></span>
+  </fieldset>
   <div class="actions">
     <button class="primary" type="submit">Save settings</button>
     <button id="test-key" class="ghost" type="button">Test OpenRouter key</button>
@@ -100,6 +131,15 @@ if (ct) ct.addEventListener('click', async ()=>{
   const j = await r.json();
   el.textContent = j.ok ? ('✓ ' + j.message) : ('✗ ' + j.message);
   el.className = j.ok ? 'ok' : 'err';
+});
+var tn = document.getElementById('test-notif');
+if (tn) tn.addEventListener('click', async ()=>{
+  const el = document.getElementById('notif-result'); el.textContent = 'sending…'; el.className='muted';
+  const r = await fetch('/settings/test_notification', {method:'POST'});
+  const j = await r.json();
+  el.textContent = j.ok ? ('✓ sent — check the bell') : ('✗ ' + j.message);
+  el.className = j.ok ? 'ok' : 'err';
+  window.dispatchEvent(new Event('clipforge:reload-notifs'));
 });
 </script>
 {% endblock %}

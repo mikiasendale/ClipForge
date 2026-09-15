@@ -127,8 +127,10 @@
   document.getElementById('btn-deep').onclick = ()=> Object.keys(sections).forEach(k=>loadTopic(k,true,true));
 
   document.getElementById('save-channels').addEventListener('click', async ()=>{
-    const body = {selected: {}};
+    const body = {selected: {}, pool: {}};
     Object.entries(selected).forEach(([k,map]) => body.selected[k] = Object.values(map));
+    // send the full candidate pool per topic so un-picked ones persist (is_active=0)
+    Object.entries(sections).forEach(([k,s]) => { body.pool[k] = (s._cards||[]).map(c=>c); });
     const res = await fetch('/onboarding', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     if (res.status === 400){ document.getElementById('onb-status').textContent = '⚠ ' + (await res.json()).detail; }
     else { window.location.href = '/dashboard'; }

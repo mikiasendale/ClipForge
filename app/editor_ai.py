@@ -102,11 +102,32 @@ def _post_chat(messages: list[dict], model: str,
         "X-Title": "ClipForge",
     }
     t0 = time.time()
-    resp = requests.post(f"{base}/chat/completions", json=body, headers=headers,
-                         timeout=float(c.get("openrouter.timeout_s", 120)))
+    try:
+        resp = requests.post(f"{base}/chat/completions", json=body, headers=headers,
+                             timeout=float(c.get("openrouter.timeout_s", 120)))
+    except Exception:
+        _metric(False)
+        raise
     latency = (time.time() - t0) * 1000.0
+    if resp.status_code >= 400:
+        _metric(False)
+        if resp.status_code == 401:
+            from . import db
+            db.set_state("openrouter_401", "1")
+    else:
+        _metric(True)
+        from . import db
+        db.set_state("openrouter_401", "")
     resp.raise_for_status()
     return resp.json(), latency
+
+
+def _metric(success: bool) -> None:
+    try:
+        from . import db
+        db.metrics_bump("openrouter", success)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # --- JSON extraction + validation ------------------------------------------

@@ -109,3 +109,23 @@ analyzer:
   visual_min_gap_s: 90
   visual_candidates: 6
   min_words_for_speech: 50
+
+# --- proactive layer --------------------------------------------------------
+schedule:
+  enabled: true          # false keeps everything manual (current behavior)
+  time: "06:00"          # daily run time (HH:MM, local)
+  catch_up: true         # if offline at schedule time, run once on boot
+
+prestaging:
+  enabled: true
+  hours_before: 10       # stage tomorrow's work this many hours before next run
+
+review:
+  mode: "manual"         # manual | auto
+  auto_approve_hours: 24 # auto-review.mode=auto: keep unreviewed clips after this long
+  cleanup_days: 7        # disk-cleanup suggestion: sources older than this, fully reviewed
+
+notifications:
+  webhook_url: ""        # POST JSON {kind,severity,title,body,actions} on any notification
+  telegram_bot_token: "" # send via Telegram Bot API if both token+chat id set
+  telegram_chat_id: ""

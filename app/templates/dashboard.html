@@ -1,10 +1,26 @@
 {% extends "base.html" %}
-{% block title %}Dashboard · ClipForge{% endblock %}
+{% block title %}Briefing · ClipForge{% endblock %}
 {% block content %}
-<div class="dash-head">
+<div class="brief-head">
   <div>
-    <h1>Dashboard</h1>
-    <p class="muted" id="quota-line">{{ clips_today }}/{{ quota }} clips today</p>
+    <h1>Morning briefing</h1>
+    <p class="muted" id="today-line">{{ today }}</p>
+  </div>
+  <div class="brief-controls">
+    <label class="switch-row">
+      <span>Schedule</span>
+      <label class="switch"><input type="checkbox" id="sched-toggle" {{ 'checked' if schedule_enabled }}>
+        <span class="knob"></span></label>
+      <span class="muted" id="next-run" data-next="{{ next_run_iso or '' }}">—</span>
+    </label>
+    <button id="enable-desktop" class="ghost sm-btn">Enable desktop alerts</button>
+  </div>
+</div>
+
+<div class="quota-hero panel">
+  <div class="ring">
+    <div class="ring-num"><span id="quota-num">{{ clips_today }}</span><small>/{{ quota }}</small></div>
+    <div class="ring-label">clips today</div>
   </div>
   <div class="run-actions">
     <button id="btn-run" class="primary">▶ Run daily job</button>
@@ -18,103 +34,217 @@
   <label class="radio {{ 'disabled' if not capcut.available }}" {% if not capcut.available %}title="{{ capcut.error }}"{% endif %}>
     <input type="radio" name="output" value="capcut" {% if output_mode == 'capcut' and capcut.available %}checked{% endif %} {{ 'disabled' if not capcut.available }}> CapCut draft
   </label>
-  {% if capcut.available %}
-    <span class="ob-note muted">{{ capcut.draft_root or 'set capcut.draft_root in settings' }}</span>
-  {% else %}
-    <span class="ob-note err">CapCut export unavailable — pip install failed</span>
-  {% endif %}
+  {% if capcut.available %}<span class="ob-note muted">{{ capcut.draft_root or 'set capcut.draft_root in settings' }}</span>
+  {% else %}<span class="ob-note err">CapCut export unavailable — pip install failed</span>{% endif %}
 </div>
 
 <div id="custom-panel" class="panel hidden">
   <h3>Custom run</h3>
-  <div class="field">
-    <label>YouTube URL (optional — blank = normal rotation)</label>
-    <input id="custom-url" type="text" placeholder="https://www.youtube.com/watch?v=…">
+  <div class="field"><label>YouTube URL (optional — blank = rotation)</label>
+    <input id="custom-url" type="text" placeholder="https://www.youtube.com/watch?v=…"></div>
+  <div class="field-row">
+    <div class="field"><label>Clip count</label><input id="custom-count" type="number" min="1" max="8" placeholder="{{ default_count }}"></div>
   </div>
-  <div class="field">
-    <label>Clip count</label>
-    <input id="custom-count" type="number" min="1" max="8" placeholder="{{ default_count }}">
-  </div>
-  <div class="field">
-    <label>Prompt override</label>
-    <textarea id="custom-prompt" rows="5" placeholder="{{ default_prompt }}"></textarea>
-  </div>
+  <div class="field"><label>Prompt override</label><textarea id="custom-prompt" rows="4" placeholder="{{ default_prompt }}"></textarea></div>
   <button id="btn-custom-run" class="primary">Start custom</button>
 </div>
 
-<div class="grid-2">
-  <div class="panel">
-    <h3>Picked channels <span class="muted">({{ channels|length }})</span></h3>
-    <div class="chan-grid">
-      {% for ch in channels %}
-      <div class="chan">
-        {% if ch.avatar_url %}<img src="{{ ch.avatar_url }}" class="avatar sm" onerror="this.style.display='none'">{% endif %}
-        <div>
-          <div class="ctitle">{{ ch.title }}</div>
-          <div class="csub"><span class="pill">{{ ch.topic }}</span></div>
-        </div>
+{% if cards %}
+<section class="bsection">
+  <h2>Signals</h2>
+  <div class="card-col">
+    {% for n in cards %}
+    <div class="sug-card sev-{{ n.severity }}" data-notif="{{ n.id }}">
+      <div class="sug-main">
+        <div class="sug-title">{{ n.title }}</div>
+        <div class="sug-body">{{ n.body }}</div>
       </div>
-      {% endfor %}
+      <div class="sug-actions">
+        {% for a in n.actions %}
+        <button class="card-action {{ 'danger-armed' if a.confirm }} {{ 'primary' if a.action=='run_daily' or a.action=='nav' }} sm-btn"
+                data-action="{{ a.action }}" data-confirm="{{ '1' if a.confirm else '0' }}"
+                data-args='{{ a.args|tojson }}'>{{ a.label }}</button>
+        {% endfor %}
+      </div>
     </div>
+    {% endfor %}
   </div>
-
-  <div class="panel">
-    <h3>Job log</h3>
-    <div class="logbox" id="logbox"><div class="muted">Idle — no job running.</div></div>
-  </div>
-</div>
-
-{% if not has_key %}
-<div class="warn">No <code>OPENROUTER_API_KEY</code> found in <code>.env</code>. The editor AI will fall back to heuristic windows. Add it in <code>.env</code> then restart.</div>
+</section>
 {% endif %}
+
+{% if pending %}
+<section class="bsection">
+  <div class="pend-card">
+    <span>{{ pending|length }} clip(s) from earlier are still unreviewed.</span>
+    <span class="pend-actions">
+      <button class="primary sm-btn" id="keep-all">Keep all</button>
+      <a class="ghost sm-btn" href="/review">Review</a>
+    </span>
+  </div>
+</section>
+{% endif %}
+
+{% if last_batch %}
+<section class="bsection">
+  <h2>Last batch <span class="muted">· {{ last_batch|length }}</span></h2>
+  <div class="clip-grid">
+    {% for c in last_batch %}
+    <figure class="clip {{ 'draft' if c.render_mode=='capcut' }}" data-clip='{{ {"id":c.id,"video_id":c.video_id,"start_s":c.start_s,"end_s":c.end_s,"caption":c.caption,"hook_title":c.hook_title,"render_mode":c.render_mode,"draft_path":c.draft_path,"status":c.status,"duration_url":"/media/source/" ~ c.video_id,"has_source":True}|tojson }}'>
+      {% if c.render_mode == 'capcut' %}
+        <div class="draftbox"><div class="drafticon">🎬</div><div class="drafttag">draft — awaiting manual export</div></div>
+      {% elif c.url %}
+        <video controls preload="metadata" src="{{ c.url }}"></video>
+      {% else %}
+        <div class="draftbox"><div class="drafttag">{{ c.status }}</div></div>
+      {% endif %}
+      <figcaption>
+        {% if c.hook_title %}<div class="hook">{{ c.hook_title }}</div>{% endif %}
+        <div class="cap">{{ c.caption or '—' }}</div>
+        <div class="clipmeta muted">{{ (c.end_s - c.start_s)|round|int }}s @ {{ c.start_s|round|int }}s ·
+          <span class="eng {{ c.engine }}">{{ c.engine }}</span>
+          <span class="clip-status st-{{ c.status }}">{{ c.status }}</span></div>
+        <div class="clip-actions">
+          <button class="ghost sm-btn adj">✎ Adjust</button>
+          {% if c.url %}<a class="secondary sm-btn" href="{{ c.url }}" download>Download</a>{% endif %}
+          <button class="primary sm-btn keep" {{ 'disabled' if c.status!='pending' }}>Keep</button>
+          <button class="danger sm-btn discard" {{ 'disabled' if c.status!='pending' }}>Discard</button>
+        </div>
+      </figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if tonight %}
+<section class="bsection">
+  <h2>Tonight's plan <span class="muted">· pre-staged</span></h2>
+  <div class="plan-list">
+    {% for p in tonight %}
+    <div class="plan-row" data-channel="{{ p.channel_id }}" data-video="{{ p.video_id }}">
+      {% if p.thumbnail %}<img class="avatar sm" src="{{ p.thumbnail }}" onerror="this.style.display='none'">{% else %}<div class="avatar ph sm">?</div>{% endif %}
+      <div class="plan-meta">
+        <div class="ctitle">{{ p.title }}</div>
+        <div class="csub"><span class="pill">{{ p.topic }}</span> {{ p.duration_s|duration }} · {{ p.windows }} windows · {{ p.channel_title }}</div>
+      </div>
+      <button class="ghost sm-btn swap">⇄ Swap</button>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% else %}
+<p class="muted">Nothing pre-staged yet — pre-staging runs ~{{ 10 }}h before the scheduled job.</p>
+{% endif %}
+
+<div class="bsection">
+  <h3 class="muted">Active channels <span>({% for ch in channels %}{% if not loop.first %}·{% endif %}{{ ch.title }}{% endfor %})</span></h3>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 (function(){
-  const logbox = document.getElementById('logbox');
-  const outputRadio = ()=> (document.querySelector('input[name=output]:checked')||{}).value || 'mp4';
+  const $ = s => document.querySelector(s);
+  const escape = x => (x==null?'':String(x)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const outputRadio = () => (document.querySelector('input[name=output]:checked')||{}).value||'mp4';
+  const CONFIRM_LABEL={discard:'Confirm discard',cleanup_sources:'Confirm delete',cleanup_stale:'Confirm delete',update_ytdlp:'Confirm update'};
 
   async function poll(){
     try{
-      const r = await fetch('/run/status'); const s = await r.json();
-      document.getElementById('quota-line').textContent = `${s.clips_today}/${s.quota} clips today` + (s.running ? ' · running' : '');
-      document.getElementById('btn-run').disabled = s.running;
-      document.getElementById('btn-custom-run').disabled = s.running;
-      const lines = s.log || [];
-      logbox.innerHTML = lines.map(l => `<div>${escapeHtml(l)}</div>`).join('') || '<div class="muted">Idle — no job running.</div>';
-      if (s.running) logbox.scrollTop = logbox.scrollHeight;
+      const s = await (await fetch('/run/status')).json();
+      $('#btn-run').disabled = s.running;
+      const q=$('#quota-num'); if(q) q.textContent = s.clips_today;
+      const lb=$('#log-live'); if(lb && s.running) lb.textContent = (s.log[s.log.length-1]||'');
     }catch(e){}
   }
-  function escapeHtml(x){ return (x||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-  setInterval(poll, 2000); poll();
+  setInterval(poll,2000); poll();
 
-  // persist last-used output choice
-  document.querySelectorAll('input[name=output]').forEach(el => el.addEventListener('change', ()=>{
-    fetch('/settings/output', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({output: outputRadio()})});
+  document.querySelectorAll('input[name=output]').forEach(el=>el.addEventListener('change',()=>{
+    fetch('/settings/output',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({output:outputRadio()})});
+  }));
+  $('#btn-run').addEventListener('click',async()=>{
+    const r=await fetch('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({output:outputRadio()})});
+    if(r.status===409) alert('A job is already running.'); poll();
+  });
+  $('#btn-custom').addEventListener('click',()=>$('#custom-panel').classList.toggle('hidden'));
+  $('#btn-custom-run').addEventListener('click',async()=>{
+    const body={url:$('#custom-url').value,count:$('#custom-count').value||null,prompt:$('#custom-prompt').value,output:outputRadio()};
+    const r=await fetch('/run/custom',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(r.status===409) alert('A job is already running.'); poll();
+  });
+
+  // schedule toggle
+  const st=$('#sched-toggle');
+  if(st) st.addEventListener('change',async()=>{
+    await fetch('/api/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:st.checked})});
+  });
+
+  // signals / card actions (confirm-gated)
+  document.querySelectorAll('.card-action').forEach(btn=>btn.addEventListener('click',async()=>{
+    const action=btn.dataset.action, args=JSON.parse(btn.dataset.args||'{}');
+    const needs=btn.dataset.confirm==='1'; let confirm=false;
+    if(action==='nav'){window.location.href=(args.to||'/settings');return;}
+    if(needs){ if(!btn.classList.contains('armed')){btn.classList.add('armed');btn.dataset.label=btn.textContent;btn.textContent=CONFIRM_LABEL[action]||'Confirm';setTimeout(()=>{btn.classList.remove('armed');btn.textContent=btn.dataset.label;},4000);return;} confirm=true; }
+    btn.disabled=true;
+    const notif=btn.closest('[data-notif]');
+    try{ const r=await fetch('/api/actions/'+encodeURIComponent(action),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({args,confirm,notif_id:notif?+notif.dataset.notif:null})});
+      if(notif) notif.remove(); if(r.restart_required){const b=$('#restart-banner');b.textContent='Restart ClipForge to apply.';b.classList.remove('hidden');}
+    }catch(e){btn.disabled=false;btn.textContent='Failed';}
   }));
 
-  document.getElementById('btn-run').addEventListener('click', async ()=>{
-    const r = await fetch('/run', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({output: outputRadio()})});
-    if (r.status===409) alert('A job is already running.');
-    poll();
+  // clip decisions
+  function clipOf(btn){return JSON.parse(btn.closest('.clip').dataset.clip);}
+  async function act(btn, url, body){ btn.disabled=true; const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); return r; }
+  document.querySelectorAll('.clip .keep').forEach(b=>b.addEventListener('click',async()=>{
+    const c=clipOf(b); await act(b,'/api/clips/'+c.id+'/keep'); 
+    b.closest('.clip').querySelector('.clip-status').textContent='approved';
+    b.closest('.clip').querySelector('.clip-status').className='clip-status st-approved';
+    b.closest('.clip').querySelector('.discard').disabled=true;
+    afterDecision();
+  }));
+  document.querySelectorAll('.clip .discard').forEach(b=>b.addEventListener('click',async()=>{
+    const c=clipOf(b);
+    if(!b.classList.contains('armed')){b.classList.add('armed');b.dataset.label=b.textContent;b.textContent='Confirm discard';setTimeout(()=>{b.classList.remove('armed');b.textContent=b.dataset.label;},4000);return;}
+    const r=await act(b,'/api/clips/'+c.id+'/discard',{confirm:true});
+    b.closest('.clip').querySelector('.clip-status').textContent='discarded';
+    b.closest('.clip').querySelector('.clip-status').className='clip-status st-discarded';
+    b.closest('.clip').querySelector('.keep').disabled=true; b.disabled=true;
+    maybeFillSlot();
+  }));
+  // Keep via Enter when a card focused
+  document.addEventListener('keydown',e=>{ if(e.key!=='Enter')return; const f=document.activeElement; const card=f&&f.closest&&f.closest('.clip'); if(card){const k=card.querySelector('.keep'); if(k&&!k.disabled) k.click();} });
+
+  let discarded=0;
+  async function maybeFillSlot(){
+    const cand = await (await fetch('/api/fill-candidate')).json();
+    if(!cand.available) return;
+    const bar=document.createElement('div'); bar.className='fill-slot';
+    bar.innerHTML=`<span>Slot freed. Fill from a staged video now?</span>`;
+    const btn=document.createElement('button'); btn.className='primary sm-btn'; btn.textContent='Fill slot now';
+    btn.onclick=async()=>{ await fetch('/api/fill-slot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_id:cand.video_id})}); bar.textContent='Filling… check the log.'; poll(); };
+    const x=document.createElement('button'); x.className='ghost sm-btn'; x.textContent='Later'; x.onclick=()=>bar.remove();
+    bar.appendChild(btn); bar.appendChild(x);
+    document.querySelector('.brief-head').appendChild(bar);
+  }
+  function afterDecision(){ /* hook */ }
+
+  // keep all pending
+  const ka=$('#keep-all'); if(ka) ka.addEventListener('click',async()=>{
+    ka.textContent='Keeping…'; ka.disabled=true;
+    const ids={{ pending|map(attribute='id')|list|tojson }};
+    for(const id of ids){ await fetch('/api/clips/'+id+'/keep',{method:'POST'}); }
+    ka.textContent='Done'; setTimeout(()=>location.reload(),600);
   });
-  document.getElementById('btn-custom').addEventListener('click', ()=>{
-    document.getElementById('custom-panel').classList.toggle('hidden');
-  });
-  document.getElementById('btn-custom-run').addEventListener('click', async ()=>{
-    const body = {
-      url: document.getElementById('custom-url').value,
-      count: document.getElementById('custom-count').value || null,
-      prompt: document.getElementById('custom-prompt').value,
-      output: outputRadio(),
-    };
-    const r = await fetch('/run/custom', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-    if (r.status===409) alert('A job is already running.');
-    poll();
-  });
+
+  // tonight's plan swap
+  document.querySelectorAll('.plan-row .swap').forEach(b=>b.addEventListener('click',async()=>{
+    const row=b.closest('.plan-row'); b.disabled=true;
+    await fetch('/api/prestaging/swap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel_id:+row.dataset.channel,video_id:row.dataset.video})});
+    row.remove();
+  }));
+
+  // live clip prepend hook (from app.js SSE)
+  window.onClipRendered = function(c){ /* dashboard already refreshes via poll */ };
 })();
 </script>
 {% endblock %}

@@ -65,7 +65,7 @@ def ordered_rotation() -> list[dict]:
     c = cfg.get_config()
     order = c.get("discovery.rotation_order", []) or []
     grouped: dict[str, list[dict]] = {}
-    for row in db.all_channels():
+    for row in db.active_channels():
         grouped.setdefault(row["topic"], []).append(dict(row))
     return build_rotation(grouped, order)
 
@@ -128,12 +128,18 @@ def list_channel_videos(channel_row: dict) -> list[dict]:
     for e in info.get("entries") or []:
         if not isinstance(e, dict) or not e.get("id"):
             continue
+        thumb = None
+        for t in (e.get("thumbnails") or [])[::-1]:
+            if t.get("url"):
+                thumb = t["url"]
+                break
         out.append({
             "video_id": e["id"],
             "title": e.get("title"),
             "duration_s": e.get("duration"),
             "views": e.get("view_count"),
             "upload_date": e.get("upload_date"),
+            "thumbnail": thumb,
         })
     return out
 

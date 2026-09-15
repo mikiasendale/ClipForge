@@ -9,6 +9,83 @@ Runs entirely locally. The only external service is the **OpenRouter API**.
 
 ---
 
+## 🟢 New here? Start with this (no tech skills needed)
+
+ClipForge is a little app that runs on **your** computer. It watches YouTube
+channels you pick, finds the most exciting ~60-second moments in old videos, adds
+captions, and turns them into ready-to-post vertical TikToks. You approve every
+clip before it's kept — nothing is uploaded anywhere.
+
+You'll do four things once, then use it daily. If you can follow a recipe, you can
+do this.
+
+### What you'll need (all free)
+- A computer running **Windows 10/11** or **macOS** (or Linux).
+- About **5 minutes** and a normal web browser (Chrome, Edge, Safari, Firefox).
+- A free **OpenRouter API key** (this is what lets the AI choose the best moments).
+  You'll get a small free key below — no card needed for the free models.
+
+### Step 1 — Download the app
+1. On this GitHub page, click the green **`<> Code`** button → **Download ZIP**.
+2. Unzip it (right-click → *Extract All* / double-click on Mac).
+3. You now have a folder called **ClipForge**. Keep it somewhere easy, like your
+   Desktop or Documents.
+
+### Step 2 — Set it up (one time)
+This installs everything the app needs. **Do this once; it takes a few minutes.**
+
+- **Windows:** open the ClipForge folder, then **double-click `bootstrap.bat`**.
+  A window will open and work by itself. If Windows asks *"Do you want to allow…"*,
+  click **Yes**. When it finishes you'll see **`Done — run run.bat`**.
+- **Mac / Linux:** open the ClipForge folder and **double-click `bootstrap.sh`**.
+  If your Mac says it's from an unidentified developer: right-click the file →
+  **Open** → **Open**. It may ask for your computer password once to install helper
+  tools — that's normal (type it and press Enter; nothing shows as you type).
+
+> 💡 It may say it's installing **Python** or **ffmpeg** — those are standard,
+> free tools it needs. Let it finish. Don't close the window until it says it's done.
+
+### Step 3 — Add your OpenRouter key (2 minutes)
+1. Go to **https://openrouter.ai** and click **Sign in** (you can use Google — free).
+2. Open **https://openrouter.ai/keys**, click **Create Key**, and **copy** the long
+   text that looks like `sk-or-v1-…`.
+3. In your ClipForge folder there's a file named **`.env`**.
+   - Easiest: open it in **Notepad** (Windows) or **TextEdit** (Mac), find the line
+     that says `OPENROUTER_API_KEY=`, and paste your key right after the `=`:
+     `OPENROUTER_API_KEY=sk-or-v1-your-key-here`. **Save the file.**
+   - Don't see `.env`? In the folder click **View → show hidden files** (Windows) or
+     in Finder press **⌘ + Shift + .** (Mac).
+
+### Step 4 — Open ClipForge
+- **Windows:** double-click **`run.bat`**.
+- **Mac / Linux:** double-click **`run.sh`**.
+
+A window opens and your browser pops up at **http://127.0.0.1:8000** — that's the
+app, running only on your computer. Leave the black window open while you use it;
+close it (or press Ctrl+C) when you're done. If it didn't open, just type
+**http://127.0.0.1:8000** into your browser.
+
+### Step 5 — Your first batch
+1. **Pick channels.** The first screen shows four groups (Football, Boxing, Cats).
+   Tick the number each group asks for (e.g. tick 3 football channels). The
+   **Save** button lights up when every group has the right count — click it.
+2. **Run.** On the home screen click **▶ Run daily job** and wait. The progress
+   bar and the 🔔 bell update as it works. Clips appear on the **Review** page.
+3. **Approve.** On the **Briefing** or **Review** page, hit **Keep** on clips you
+   like or **Discard** on ones you don't. Kept clips move to an **approved** folder.
+4. **Find your videos.** They're in the folder
+   `data/output/approved/…` on your computer — drag them into TikTok / Reels /
+   Shorts.
+
+That's it! Come back each day, hit **Run daily job**, review, and post.
+Set it to run automatically in the background on the **Settings** page when you're
+comfortable.
+
+**When something goes wrong?** Scroll to **[Troubleshooting](#troubleshooting)**
+below — every common hiccup is covered there in plain words.
+
+---
+
 ## Requirements
 
 - **Python 3.12** (pinned; bootstrap installs it if missing)
@@ -19,7 +96,7 @@ No Node.js, no Docker, no cloud beyond OpenRouter.
 
 ---
 
-## Quick start
+## Quick start (if you're comfortable with a terminal)
 
 ### Windows
 ```bat
@@ -44,6 +121,7 @@ Headless daily job (no UI):
 ./run.sh --auto        # or: run.bat --auto
 ```
 
+
 ---
 
 ## Using the app
@@ -53,13 +131,19 @@ Headless daily job (no UI):
    (Football 3, Boxing 3, Cats/Silent 2, Cats/Compilations 2). **Save** enables only
    when every quota is met. Use *Deep enrich* to fill subscriber counts / joined
    year / avatars via Scrapling.
-2. **Dashboard** (`/dashboard`) — **Run daily job** (rotation across your picked
-   channels until the daily quota is hit) or **Run custom…** (optional single URL,
-   clip count, prompt override). A live job log polls the background thread.
-3. **Clips** (`/clips`) — finished clips grouped by day; play them in the browser.
+2. **Briefing** (`/dashboard`) — your daily home: quota ring, next scheduled run,
+   the **Last batch** to Keep / Adjust / Discard, and **Tonight's plan** (videos
+   pre-staged for tomorrow). **Run daily job** / **Run custom…** start work; an
+   **Output** switch picks **mp4** or a **CapCut draft**. The 🔔 bell + live log
+   update in real time (SSE, no refresh).
+3. **Review** (`/review`) — finished clips grouped by day. Play them, edit
+   in/out points + captions over the source, and re-render in seconds. CapCut rows
+   show a *draft — awaiting manual export* badge with a **Copy path** button.
 4. **Settings** (`/settings`) — model names, whisper model, daily quota, clip
-   length, face tracking, and the persisted default editor prompt. *Test key*
-   pings OpenRouter.
+   length, face tracking, the default editor prompt, the editor **agent**,
+   **schedule / pre-staging / review** behaviour, CapCut draft root, and
+   notification webhooks/Telegram (each with a **Test** button).
+
 
 ---
 
@@ -239,15 +323,36 @@ no CDN, no framework, no build step.
 
 ## Troubleshooting
 
-- **No candidates on onboarding** — network/YouTube throttling; click *Refresh
-  search*, or *Deep enrich* once Scrapling's browser is installed
-  (`.venv/bin/scrapling install`).
-- **Editor AI fell back to heuristics** — check `OPENROUTER_API_KEY`, then
-  `data/logs/openrouter.log` (model, latency, tokens, errors).
-- **ffmpeg not found** — re-run bootstrap; the launcher also checks `tools/`.
+Plain-language fixes for the common bumps:
+
+- **A setup window popped open then closed immediately** — that's an error that
+  quit too fast. Re-run `bootstrap`/`run`, and when the window appears **leave it
+  open** and read the last few lines. Most often it's a message about no internet
+  or "Python 3.12 could not be installed" — follow the link it prints, install
+  Python from <https://www.python.org/downloads/> (tick *"Add python to PATH"*),
+  then run the setup file again.
+- **Browser didn't open** — just type **http://127.0.0.1:8000** into your browser's
+  address bar (keep the app window open).
+- **Onboarding shows "No candidates found"** — usually a slow/blocked internet or
+  a YouTube hiccup. Click **↻ Refresh search**, or **✦ Deep enrich**. Re-run setup
+  once; if it persists, try a different network.
+- **Clips have no captions / "fell back to heuristics"** — the AI editor needs your
+  key. Double-check the `.env` file has your OpenRouter key on the
+  `OPENROUTER_API_KEY=` line (no spaces, no quotes), then restart the app.
+- **The Run button does nothing** — another job may already be running (the app
+  runs one at a time, on purpose). Wait for the live log to finish, then try again.
+- **ffmpeg not found** — re-run the bootstrap/setup; the launcher also looks in
+  `tools/`.
+- **Want to start completely fresh** — delete the `data` folder; ClipForge rebuilds
+  it on the next run.
+
+Still stuck? The detailed technical logs live in `data/logs/` (openrouter, agent,
+health).
 
 ## Security notes
 
 - `.env` (secrets) is gitignored; only `.env.example` is committed.
-- Server binds `127.0.0.1` only.
+- Server binds `127.0.0.1` only (nothing is reachable from the internet).
 - All downloaded/rendered media stays under `data/` (gitignored).
+- Suggestions are **advisory** — nothing destructive (delete / discard / update)
+  runs without you explicitly confirming it twice.

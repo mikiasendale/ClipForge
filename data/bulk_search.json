@@ -1,7 +1,7 @@
 {
-  "query": "steve jobs interview",
-  "generated_at": "2026-09-17T21:17:42",
-  "count": 16,
+  "query": "steve jobs interview steve jobs interview full steve jobs speech full steve jobs documentary steve jobs keynote full walter isaacson steve jobs",
+  "generated_at": "2026-09-17T22:42:02",
+  "count": 93,
   "rules": {
     "min_duration_s": 3600,
     "unique_titles": true,
@@ -9,11 +9,131 @@
   },
   "videos": [
     {
+      "url": "https://www.youtube.com/watch?v=RVVfJVj5z8s",
+      "video_id": "RVVfJVj5z8s",
+      "title": "Amazon Empire: The Rise and Reign of Jeff Bezos (full documentary) | FRONTLINE",
+      "duration_s": 6797.0,
+      "views": 43445220,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=PXWRyvoYnic",
+      "video_id": "PXWRyvoYnic",
+      "title": "New MJ Documentary: March, 2017 (Man in the Mirror) with Earnest Valentino",
+      "duration_s": 5655.0,
+      "views": 30087151,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=VQKMoT-6XSg",
+      "video_id": "VQKMoT-6XSg",
+      "title": "iPhone 1 - Steve Jobs MacWorld keynote in 2007 - Full Presentation, 80 mins",
+      "duration_s": 4751.0,
+      "views": 17122798,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=NXD-WJYtkyc",
+      "video_id": "NXD-WJYtkyc",
+      "title": "Ludovico Einaudi - Live From The Steve Jobs Theatre / 2019 (Official Concert Film)",
+      "duration_s": 4270.0,
+      "views": 9744746,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=9BDmC5u_MLE",
+      "video_id": "9BDmC5u_MLE",
+      "title": "Walter Isaacson: Elon Musk’s Father Was A Monster, He Ruined His Life",
+      "duration_s": 5561.0,
+      "views": 6153515,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=s4pVFLUlx8g",
+      "video_id": "s4pVFLUlx8g",
+      "title": "History of Steve Jobs (Full Documentary)",
+      "duration_s": 3964.0,
+      "views": 4907787,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=psL_5RIBqnY",
+      "video_id": "psL_5RIBqnY",
+      "title": "WWDC 2019 Keynote — Apple",
+      "duration_s": 8253.0,
+      "views": 4254517,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=kgNrZGcoHZs",
+      "video_id": "kgNrZGcoHZs",
+      "title": "The Secret Life of Cruise Ships… What Passengers Never See | Full Documentary",
+      "duration_s": 4019.0,
+      "views": 4154917,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=t9oLpD4FAO4",
+      "video_id": "t9oLpD4FAO4",
+      "title": "Reviewing Every iPod Ever - 20 Years of Apple iPod (Documentary)",
+      "duration_s": 7059.0,
+      "views": 2270045,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=wvhW8cp15tk",
+      "video_id": "wvhW8cp15tk",
+      "title": "Steve Jobs and Bill Gates Together at D5 Conference 2007",
+      "duration_s": 5374.0,
+      "views": 2236226,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=R3OcY37GOAA",
+      "video_id": "R3OcY37GOAA",
+      "title": "The Madness of Steve Jobs Told by Steve Wozniak",
+      "duration_s": 3711.0,
+      "views": 2060893,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=Gk-9Fd2mEnI",
+      "video_id": "Gk-9Fd2mEnI",
+      "title": "Steve Jobs President & CEO, NeXT Computer Corp and Apple. MIT Sloan Distinguished Speaker Series",
+      "duration_s": 4374.0,
+      "views": 1947083,
+      "channel": null
+    },
+    {
       "url": "https://www.youtube.com/watch?v=aGOV5R7M1Js",
       "video_id": "aGOV5R7M1Js",
       "title": "Walter Isaacson: Elon Musk, Steve Jobs, Einstein, Da Vinci & Ben Franklin | Lex Fridman Podcast #395",
       "duration_s": 7670.0,
-      "views": 1712992,
+      "views": 1712997,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=1tQ5XwvjPmA",
+      "video_id": "1tQ5XwvjPmA",
+      "title": "Steve Jobs Introduces the Macintosh",
+      "duration_s": 4830.0,
+      "views": 1603202,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=asXOlPP_fr0",
+      "video_id": "asXOlPP_fr0",
+      "title": "Bill Gates y Steve Jobs juntos. Subtitulado español completo.",
+      "duration_s": 5380.0,
+      "views": 1589736,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=5GAlxfY_YLo",
+      "video_id": "5GAlxfY_YLo",
+      "title": "Entrevista perdida Steve Jobs en español",
+      "duration_s": 3976.0,
+      "views": 1474626,
       "channel": null
     },
     {
@@ -21,7 +141,7 @@
       "video_id": "i5f8bqYYwps",
       "title": "Steve Jobs in 2010, at D8 Conference (Full Video)",
       "duration_s": 5754.0,
-      "views": 893526,
+      "views": 893554,
       "channel": null
     },
     {
@@ -29,15 +149,15 @@
       "video_id": "M6Oxl5dAnR0",
       "title": "The Steve Jobs 95 Interview  unabridged",
       "duration_s": 4982.0,
-      "views": 563802,
+      "views": 563807,
       "channel": null
     },
     {
-      "url": "https://www.youtube.com/watch?v=YXUhLbV8Nrg",
-      "video_id": "YXUhLbV8Nrg",
-      "title": "Steve Jobs MIT 1992: Steve Jobs Talk, Steve Jobs Speech",
-      "duration_s": 4374.0,
-      "views": 455193,
+      "url": "https://www.youtube.com/watch?v=TfLvaGt5FD8",
+      "video_id": "TfLvaGt5FD8",
+      "title": "01LIVE spécial iPhone : la Keynote d'Apple commentée en direct !",
+      "duration_s": 9529.0,
+      "views": 540110,
       "channel": null
     },
     {
@@ -45,7 +165,47 @@
       "video_id": "IzH54FpWAP0",
       "title": "Steve Jobs in 2005 at D3 (Enhanced Quality)",
       "duration_s": 4385.0,
-      "views": 451641,
+      "views": 451662,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=yBKsL-kRQI0",
+      "video_id": "yBKsL-kRQI0",
+      "title": "Steve Jobs Full Movie| A movie which every Student must watch",
+      "duration_s": 7385.0,
+      "views": 444360,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=CRi8r0XQFHU",
+      "video_id": "CRi8r0XQFHU",
+      "title": "Steve Wozniak - Steve-O's Wild Ride! Ep #96",
+      "duration_s": 5770.0,
+      "views": 420521,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=KROYfsNl59U",
+      "video_id": "KROYfsNl59U",
+      "title": "Apple Special Event September 2012 - iPhone 5 Full Keynote",
+      "duration_s": 7063.0,
+      "views": 390174,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=93S7DV4YATI",
+      "video_id": "93S7DV4YATI",
+      "title": "Hollywood Documentary Movie Inside Job {2010} | FULL HD MOVIE |Dubbed Hindi | SUBSCRIBE MY CHANNEL 🙏",
+      "duration_s": 5956.0,
+      "views": 309748,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=92NNyd3m79I",
+      "video_id": "92NNyd3m79I",
+      "title": "Steve Jobs Unveils the NeXT Computer - October 12, 1988",
+      "duration_s": 9507.0,
+      "views": 278626,
       "channel": null
     },
     {
@@ -57,19 +217,83 @@
       "channel": null
     },
     {
-      "url": "https://www.youtube.com/watch?v=oNx1M9atAE0",
-      "video_id": "oNx1M9atAE0",
-      "title": "“India Looks So Poor”: Manu Joseph on Broken Cities, Gen Z, Jobs, CM Vijay & PM Modi | EP-449",
-      "duration_s": 8465.0,
-      "views": 258030,
+      "url": "https://www.youtube.com/watch?v=B0hOck76NPE",
+      "video_id": "B0hOck76NPE",
+      "title": "Apple Keynote September 2013 - HD - iPhone 5S, iPhone 5C, IOS 7",
+      "duration_s": 4127.0,
+      "views": 249855,
       "channel": null
     },
     {
-      "url": "https://www.youtube.com/watch?v=zZtWlSDvb_k",
-      "video_id": "zZtWlSDvb_k",
-      "title": "Steve Jobs introduces the iPad - 2010 (full)",
-      "duration_s": 5399.0,
-      "views": 190173,
+      "url": "https://www.youtube.com/watch?v=bVNHvZiI-So",
+      "video_id": "bVNHvZiI-So",
+      "title": "Steve Jobs : L'homme qui a révolutionné le monde",
+      "duration_s": 4109.0,
+      "views": 233374,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=XzbFgzgy1mc",
+      "video_id": "XzbFgzgy1mc",
+      "title": "1999 MacWorld Expo San Francisco - Steve Jobs Keynote - Apple VHS Archive",
+      "duration_s": 6028.0,
+      "views": 194001,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=_X5xOI_qu9I",
+      "video_id": "_X5xOI_qu9I",
+      "title": "Apple Keynote 2008 Complete - iPhone 3G, iPhone OS & MobileMe.",
+      "duration_s": 6214.0,
+      "views": 184486,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=TFm--2_RtM8",
+      "video_id": "TFm--2_RtM8",
+      "title": "SEED | The Semen Retention Documentary (Full Film)",
+      "duration_s": 3617.0,
+      "views": 176086,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=SXSJzWxh0yo",
+      "video_id": "SXSJzWxh0yo",
+      "title": "CHM Revolutionaries: Steve Jobs The Authorized Biography with Author Walter Isaacson",
+      "duration_s": 5006.0,
+      "views": 170715,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=hIigp_bxUcQ",
+      "video_id": "hIigp_bxUcQ",
+      "title": "Apple wwdc 2013 FULL Keynote  [HD]",
+      "duration_s": 7173.0,
+      "views": 134805,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=DnoJgjbKMRE",
+      "video_id": "DnoJgjbKMRE",
+      "title": "CeBIT Global Conferences - Keynote Steve Wozniak",
+      "duration_s": 4012.0,
+      "views": 119377,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=UjUd0VSM2RA",
+      "video_id": "UjUd0VSM2RA",
+      "title": "Apple Keynote 2010 WWDC Complete - iPhone 4",
+      "duration_s": 6767.0,
+      "views": 119111,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=drsuHb_BYZo",
+      "video_id": "drsuHb_BYZo",
+      "title": "March Event 2015 - FULL KEYNOTE",
+      "duration_s": 5686.0,
+      "views": 105069,
       "channel": null
     },
     {
@@ -81,19 +305,35 @@
       "channel": null
     },
     {
-      "url": "https://www.youtube.com/watch?v=L1pA1LqXqXo",
-      "video_id": "L1pA1LqXqXo",
-      "title": "Steve Jobs and Bill Gates Interview (Full Video)",
-      "duration_s": 5374.0,
-      "views": 95814,
+      "url": "https://www.youtube.com/watch?v=M-str1pVX80",
+      "video_id": "M-str1pVX80",
+      "title": "iPad 2 Keynote March 2 2011",
+      "duration_s": 4417.0,
+      "views": 95482,
       "channel": null
     },
     {
-      "url": "https://www.youtube.com/watch?v=U4lZ0SwPDEs",
-      "video_id": "U4lZ0SwPDEs",
-      "title": "SEE IT: Hasan Piker PRESSED by MS NOW in FIERY interview",
-      "duration_s": 4794.0,
-      "views": 72544,
+      "url": "https://www.youtube.com/watch?v=BwUGh0XKrNQ",
+      "video_id": "BwUGh0XKrNQ",
+      "title": "Apple Keynote 2009 WWDC Complete - iPhone 3GS, MacBook Pro Family & OS X Snow Leopard",
+      "duration_s": 7282.0,
+      "views": 78083,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=9m68auPIPRk",
+      "video_id": "9m68auPIPRk",
+      "title": "Steve Jobs - The Lost Interview (11 May 2012) [VO] [ST-FR] [Ultra HD 4K]",
+      "duration_s": 3991.0,
+      "views": 76625,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=IIWqmaALyyA",
+      "video_id": "IIWqmaALyyA",
+      "title": "Steve Young on retirement, Montana awkwardness, finding love and faith | Full Interview",
+      "duration_s": 6520.0,
+      "views": 70512,
       "channel": null
     },
     {
@@ -101,7 +341,7 @@
       "video_id": "c-o73Zh9rdA",
       "title": "Steve Jobs on Real Career Growth: Why Ownership Beats Consulting (MIT Talk Insights)",
       "duration_s": 4191.0,
-      "views": 51593,
+      "views": 51612,
       "channel": null
     },
     {
@@ -109,7 +349,31 @@
       "video_id": "yQ16_YxLbB8",
       "title": "Complete Apple WWDC | Steve Jobs talk and answer developers questions | 1997",
       "duration_s": 4277.0,
-      "views": 50676,
+      "views": 50701,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=UM2plOAjmag",
+      "video_id": "UM2plOAjmag",
+      "title": "Steve Jobs 2010 iPad Keynote – Apple Reinvents the Tablet",
+      "duration_s": 5399.0,
+      "views": 49164,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=OJPyIUL_vbo",
+      "video_id": "OJPyIUL_vbo",
+      "title": "Capture holiday peak demand | Rethink Retail 2026 (full keynote)",
+      "duration_s": 8004.0,
+      "views": 46192,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=kl2Flp4oK-g",
+      "video_id": "kl2Flp4oK-g",
+      "title": "Inside the Apple Factory: Software Design in the Age of Steve Jobs",
+      "duration_s": 5785.0,
+      "views": 43633,
       "channel": null
     },
     {
@@ -117,7 +381,271 @@
       "video_id": "eU4WlADVgM8",
       "title": "The 12 Years that Changed Steve Jobs",
       "duration_s": 3773.0,
-      "views": 40856,
+      "views": 40914,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=p0v1cWk71xw",
+      "video_id": "p0v1cWk71xw",
+      "title": "How Steve Jobs saved the Macintosh | Version History",
+      "duration_s": 4518.0,
+      "views": 39332,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=psAeTDYezdo",
+      "video_id": "psAeTDYezdo",
+      "title": "The Apple Lisa: The Machine That Invented the Mac | Full Documentary #apple50",
+      "duration_s": 6473.0,
+      "views": 37661,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=V7_hrDfkJx4",
+      "video_id": "V7_hrDfkJx4",
+      "title": "Documentaire complet sur Steve Jobs",
+      "duration_s": 4124.0,
+      "views": 36078,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=_zUV9j_SJr8",
+      "video_id": "_zUV9j_SJr8",
+      "title": "Steve Jobs 2008 MacBook Air Keynote – The World’s Thinnest Laptop Revealed",
+      "duration_s": 4538.0,
+      "views": 36005,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=-USmtSxnSe8",
+      "video_id": "-USmtSxnSe8",
+      "title": "Working for Steve Jobs & the Future of esports Orgs | CEO NRG Andy Miller",
+      "duration_s": 5809.0,
+      "views": 34834,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=mlWX7RltfDE",
+      "video_id": "mlWX7RltfDE",
+      "title": "Sequoia Legend Michael Moritz: Steve Jobs, Being an Outsider, and Investing in the Age of AI",
+      "duration_s": 5649.0,
+      "views": 32300,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=SCTHVKP0kmA",
+      "video_id": "SCTHVKP0kmA",
+      "title": "Steve Jobs - The Brutal Truth Behind the Visionary Documentary",
+      "duration_s": 4642.0,
+      "views": 31469,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=DaeJJo0VyX0",
+      "video_id": "DaeJJo0VyX0",
+      "title": "Documentário completo sobre a história de Steve Jobs",
+      "duration_s": 4216.0,
+      "views": 30164,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=VOFSllSc354",
+      "video_id": "VOFSllSc354",
+      "title": "#72 | Stephen Wolfram, Wolfram Alpha - Conversational Documentary on My Entire Arc of Life",
+      "duration_s": 15376.0,
+      "views": 19362,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=KlPw3t1khHs",
+      "video_id": "KlPw3t1khHs",
+      "title": "CES 2012: Steve Ballmer CES Keynote Address",
+      "duration_s": 4512.0,
+      "views": 13649,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=kUL3iy313-Q",
+      "video_id": "kUL3iy313-Q",
+      "title": "Apple Tokyo 2001 Keynote",
+      "duration_s": 7238.0,
+      "views": 13480,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=X7xCJN2Er-0",
+      "video_id": "X7xCJN2Er-0",
+      "title": "Steve Jobs by Walter Isaacson | Full Audiobook (Part 1)",
+      "duration_s": 38412.0,
+      "views": 11307,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=LrbnDp51bLQ",
+      "video_id": "LrbnDp51bLQ",
+      "title": "Steve Jobs NeXT Expo 1992",
+      "duration_s": 6741.0,
+      "views": 11154,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=6nJ-8F0NBy8",
+      "video_id": "6nJ-8F0NBy8",
+      "title": "She Married a Homeless Stranger—Then Learned He Owned a Jewelry Empire | Full Drama",
+      "duration_s": 3762.0,
+      "views": 10785,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=I3FiBimJSrM",
+      "video_id": "I3FiBimJSrM",
+      "title": "Steve Jobs Full Keynote Macworld 1998 in San Francisco - Enhanced Audio 1080p",
+      "duration_s": 5388.0,
+      "views": 9978,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=py_4dexp4ZE",
+      "video_id": "py_4dexp4ZE",
+      "title": "Every Steve Jobs Apple Product Presentation",
+      "duration_s": 13605.0,
+      "views": 8425,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=9ipDYIUWt1s",
+      "video_id": "9ipDYIUWt1s",
+      "title": "Apple WWDC 2006 Keynote",
+      "duration_s": 5082.0,
+      "views": 7516,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=64OyzHvxgGE",
+      "video_id": "64OyzHvxgGE",
+      "title": "Goodbye, Tim Cook (Full Documentary)",
+      "duration_s": 5229.0,
+      "views": 7257,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=6klXy-25u8c",
+      "video_id": "6klXy-25u8c",
+      "title": "Steve Jobs Full Keynote at Macworld 1998 in New York - Enhanced Audio",
+      "duration_s": 6329.0,
+      "views": 7129,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=fz-epY2JB3Q",
+      "video_id": "fz-epY2JB3Q",
+      "title": "Steve Jobs in Exile: NeXT, Failure, Revenge, and the Making of a Tech Visionary | Geoffrey Cain",
+      "duration_s": 8590.0,
+      "views": 5895,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=Bbwj58Xj2yI",
+      "video_id": "Bbwj58Xj2yI",
+      "title": "Steve Jobs Triumph of the Nerds Lost Interview (1995)",
+      "duration_s": 4269.0,
+      "views": 5401,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=7lvhLtCqfd8",
+      "video_id": "7lvhLtCqfd8",
+      "title": "From Ben Franklin to Steve Jobs: Walter Isaacson on the Great Leaders",
+      "duration_s": 4390.0,
+      "views": 5169,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=9JGBYlJsowk",
+      "video_id": "9JGBYlJsowk",
+      "title": "Andrew Carnegie Documentary PBS 1997",
+      "duration_s": 6326.0,
+      "views": 3905,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=4g3gmFqAxwg",
+      "video_id": "4g3gmFqAxwg",
+      "title": "Apple keynote Special Event October 2012 HD - iPad Mini, iPad 4 & iMac",
+      "duration_s": 4363.0,
+      "views": 3581,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=Zle3bUCrwow",
+      "video_id": "Zle3bUCrwow",
+      "title": "Apple Event - Keynote September 2017",
+      "duration_s": 7114.0,
+      "views": 3059,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=HFl48f4F0Pw",
+      "video_id": "HFl48f4F0Pw",
+      "title": "Learn English with Steve Jobs' speech || Stay Hungry, Stay Foolish",
+      "duration_s": 4565.0,
+      "views": 2920,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=wZq1S6N2u2Y",
+      "video_id": "wZq1S6N2u2Y",
+      "title": "Steve Jobs | 1 Hour & 17 Minutes of Business & Marketing Wisdom",
+      "duration_s": 4630.0,
+      "views": 2629,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=NtkaprQazNo",
+      "video_id": "NtkaprQazNo",
+      "title": "Steve Jobs – Apple Keynote (October 2010)",
+      "duration_s": 5366.0,
+      "views": 2011,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=-Pb_OIBW4Ys",
+      "video_id": "-Pb_OIBW4Ys",
+      "title": "Apple Keynote at Town Hall August 2007 (Aluminum iMacs and Wireless Keyboards)",
+      "duration_s": 4345.0,
+      "views": 1836,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=NNWxQd2jkYw",
+      "video_id": "NNWxQd2jkYw",
+      "title": "Steve Jobs by Isaacson Walter A voice book  📖📚كتاب مسموع",
+      "duration_s": 12455.0,
+      "views": 1693,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=Xt9ktxxIWyo",
+      "video_id": "Xt9ktxxIWyo",
+      "title": "Apple Keynote Event 2015 full",
+      "duration_s": 7346.0,
+      "views": 909,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=3iC8qM7Wiac",
+      "video_id": "3iC8qM7Wiac",
+      "title": "2002 january macworld keynote",
+      "duration_s": 7268.0,
+      "views": 818,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=RSn44gTiWuQ",
+      "video_id": "RSn44gTiWuQ",
+      "title": "Steve Jobs introduces the 1st iPad - Apple Keynote Event in 2010",
+      "duration_s": 5482.0,
+      "views": 698,
       "channel": null
     },
     {
@@ -125,15 +653,103 @@
       "video_id": "_iaJhFbmlig",
       "title": "Steve Jobs : the Lost Tapes Recovered | Full Documentary (English Subtitles)",
       "duration_s": 3941.0,
-      "views": 678,
+      "views": 679,
       "channel": null
     },
     {
-      "url": "https://www.youtube.com/watch?v=1laUP6_jvX4",
-      "video_id": "1laUP6_jvX4",
-      "title": "Working with Steve Jobs | FULL interview with Guy Kawasaki",
-      "duration_s": 3811.0,
-      "views": 621,
+      "url": "https://www.youtube.com/watch?v=Fc7O3vzuHNU",
+      "video_id": "Fc7O3vzuHNU",
+      "title": "Biography : Steve Jobs (Documentary)",
+      "duration_s": 4461.0,
+      "views": 654,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=DtVLmIwQESU",
+      "video_id": "DtVLmIwQESU",
+      "title": "Ex-JP Morgan Recruiting Captain’s 6 Hour Full Course to Breaking Into Banking (2026)",
+      "duration_s": 21634.0,
+      "views": 441,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=Q7NHPvcmz2Q",
+      "video_id": "Q7NHPvcmz2Q",
+      "title": "Walter Isaacson on Steve Jobs - John Adams Institute",
+      "duration_s": 5690.0,
+      "views": 370,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=9PFbk94sxFQ",
+      "video_id": "9PFbk94sxFQ",
+      "title": "SFFD - 09/11/2026 - Full Video, 25th Anniversary",
+      "duration_s": 4368.0,
+      "views": 359,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=1rPNiTCupmQ",
+      "video_id": "1rPNiTCupmQ",
+      "title": "Steve Jobs, 2003-1 Macworld SF Presentation",
+      "duration_s": 7311.0,
+      "views": 325,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=cAgPevA9vik",
+      "video_id": "cAgPevA9vik",
+      "title": "Steve Jobs at Macworld Expo & Conference in Tokyo 2002 Keynote speech ",
+      "duration_s": 5623.0,
+      "views": 250,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=U_0BmqbAGJI",
+      "video_id": "U_0BmqbAGJI",
+      "title": "STEVE JOBS — WALTER ISAACSON | BOOK SUMMARY IN ENGLISH",
+      "duration_s": 3765.0,
+      "views": 77,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=bYFFLTVvY1w",
+      "video_id": "bYFFLTVvY1w",
+      "title": "The Entire Story of Jensen Huang and Nvidia | Sleep Documentary",
+      "duration_s": 5176.0,
+      "views": 71,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=XAo7girR2lY",
+      "video_id": "XAo7girR2lY",
+      "title": "Steve Jobs by Walter Isaacson | Ep #13",
+      "duration_s": 4129.0,
+      "views": 54,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=SDJH3RgbyDo",
+      "video_id": "SDJH3RgbyDo",
+      "title": "Macworld 2000 New York Keynote",
+      "duration_s": 6131.0,
+      "views": 17,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=OcKeXpGh-EY",
+      "video_id": "OcKeXpGh-EY",
+      "title": "Steve Jobs - Walter Isaacson | After Steve: How Apple Became Trillion Dollar Company & Lost Its Soul",
+      "duration_s": 5030.0,
+      "views": 12,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=Vo1LcApPRuk",
+      "video_id": "Vo1LcApPRuk",
+      "title": "Walter Isaacson on the Apple Founder, Steve Jobs, and Everything in Between.",
+      "duration_s": 3852.0,
+      "views": null,
       "channel": null
     }
   ]

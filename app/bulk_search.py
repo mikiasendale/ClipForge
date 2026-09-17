@@ -107,6 +107,44 @@ def _mentions(entry: dict, terms: list[str]) -> bool:
     return any(t in hay for t in terms)
 
 
+# --- target-driven relaxation ladder ---------------------------------------
+# Guarantees that NEVER relax: >min_hours, unique exact durations.
+# Levers, in order: title-similarity threshold, then the topical filter.
+RELAX_LADDER = [
+    {"threshold": 0.85, "require_terms": None},  # strict (runner's choice)
+    {"threshold": 0.95, "require_terms": None},  # near-duplicate titles only
+    {"threshold": 0.99, "require_terms": None},  # almost identical titles only
+    {"threshold": 0.99, "require_terms": False},  # last resort: include off-topic
+]
+DEFAULT_MIN_COUNT = 75
+
+
+def curate_to_target(entries: list[dict], limit: int = DEFAULT_LIMIT,
+                     min_s: float = 3600.0, min_count: int = DEFAULT_MIN_COUNT,
+                     query: str | None = None, require_terms: bool = True,
+                     log: Callable = print) -> tuple[list[dict], dict]:
+    """Curate until at least ``min_count`` results, relaxing progressively.
+
+    Returns (kept, stage_info). The >min_hours and unique-durations guarantees
+    hold at every stage; only title strictness and topical filtering relax.
+    """
+    best: list[dict] = []
+    best_stage: dict = {}
+    for i, st in enumerate(RELAX_LADDER):
+        thr = st["threshold"]
+        terms = require_terms if st["require_terms"] is None else st["require_terms"]
+        kept = curate(entries, limit=limit, min_s=min_s, threshold=thr,
+                      query=query, require_terms=terms)
+        log(f"[bulk]   stage {i}: threshold={thr}, topical={terms} -> {len(kept)}")
+        if len(kept) > len(best):
+            best, best_stage = kept, {"stage": i, "threshold": thr, "require_terms": terms}
+        if len(kept) >= min_count:
+            return kept, best_stage
+    # even the loosest stage fell short -> keep the largest set we found
+    log(f"[bulk]   target {min_count} unreachable; keeping largest set ({len(best)})")
+    return best, best_stage
+
+
 # --- persistence ------------------------------------------------------------
 def save(entries: list[dict], query: str, out: str | Path = DEFAULT_OUT) -> dict[str, Path]:
     """Write JSON (reloadable) + TXT (one URL per line). Returns both paths."""
@@ -143,32 +181,59 @@ def load(path: str | Path = DEFAULT_OUT) -> dict[str, Any]:
 
 
 # --- entry point ------------------------------------------------------------
-def run(query: str = DEFAULT_QUERY, limit: int = DEFAULT_LIMIT,
+def _union(queries: list[str], limit: int, log: Callable) -> list[dict]:
+    """Fetch every query and union results by video_id (first query wins)."""
+    seen: dict[str, dict] = {}
+    for q in queries:
+        timeout = 180 if limit <= 300 else 900
+        entries = discovery._search_query(q, limit=limit, timeout=timeout)
+        log(f"[bulk]   {q!r}: {len(entries)} results")
+        for e in entries:
+            vid = e.get("id")
+            if vid and vid not in seen:
+                seen[vid] = e
+    return list(seen.values())
+
+
+def run(queries: str | list[str] = DEFAULT_QUERY, limit: int = DEFAULT_LIMIT,
         min_hours: float = DEFAULT_MIN_HOURS, out: str | Path = DEFAULT_OUT,
-        require_terms: bool = True, log: Callable = print) -> list[dict]:
-    log(f"[bulk] searching ytsearch{limit}:{query!r}")
-    # large result pages take longer than the per-topic discovery budget
-    entries = discovery._search_query(query, limit=limit, timeout=180)
-    log(f"[bulk] {len(entries)} raw results")
-    kept = curate(entries, limit=limit, min_s=min_hours * 3600,
-                  query=query, require_terms=require_terms)
+        require_terms: bool = True, min_count: int = DEFAULT_MIN_COUNT,
+        log: Callable = print) -> list[dict]:
+    if isinstance(queries, str):
+        queries = [queries]
+    log(f"[bulk] {len(queries)} query(ies) x ytsearch{limit}")
+    entries = _union(queries, limit, log)
+    log(f"[bulk] {len(entries)} unique raw results")
+
+    # topical terms = union of every query's words
+    terms_query = " ".join(queries)
+    kept, stage = curate_to_target(entries, limit=limit, min_s=min_hours * 3600,
+                                   min_count=min_count, query=terms_query,
+                                   require_terms=require_terms, log=log)
+    if stage:
+        log(f"[bulk] reached {len(kept)} via stage {stage['stage']} "
+            f"(threshold={stage['threshold']}, topical={stage['require_terms']})")
     log(f"[bulk] {len(kept)} curated (>{min_hours}h, unique titles, unique lengths)")
-    paths = save(kept, query, out)
+    paths = save(kept, terms_query, out)
     log(f"[bulk] saved {paths['json']} + {paths['txt']}")
     return kept
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(prog="bulk_search")
-    ap.add_argument("query", nargs="?", default=DEFAULT_QUERY)
+    ap.add_argument("query", nargs="?", default=DEFAULT_QUERY,
+                    help="one query, or several comma-separated (results are unioned)")
     ap.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     ap.add_argument("--min-hours", type=float, default=DEFAULT_MIN_HOURS)
+    ap.add_argument("--min-count", type=int, default=DEFAULT_MIN_COUNT,
+                    help="target minimum results (relaxes title/topical strictness to reach it)")
     ap.add_argument("--out", default=DEFAULT_OUT)
     ap.add_argument("--no-require-terms", action="store_true",
-                    help="keep off-topic results (default: title/channel must mention the query)")
+                    help="keep off-topic results (default: title/channel must mention a query word)")
     args = ap.parse_args()
-    rows = run(args.query, args.limit, args.min_hours, args.out,
-               require_terms=not args.no_require_terms)
+    queries = [q.strip() for q in args.query.split(",") if q.strip()]
+    rows = run(queries, args.limit, args.min_hours, args.out,
+               require_terms=not args.no_require_terms, min_count=args.min_count)
     for r in rows[:20]:
         m = int((r.get("duration") or 0) // 60)
         views = int(r.get("view_count") or r.get("views") or 0)

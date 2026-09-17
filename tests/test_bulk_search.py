@@ -1,5 +1,9 @@
 """Bulk search curation (no network — search results mocked)."""
+import tempfile
+
 from app import bulk_search as bs
+
+_tmpdir = tempfile.TemporaryDirectory()
 
 
 def _e(id, title, dur, views, url=None):
@@ -86,3 +90,47 @@ def test_save_and_load_roundtrip(tmp_path):
 
 def test_load_missing_file(tmp_path):
     assert bs.load(tmp_path / "nope.json") == {}
+
+
+def test_curate_to_target_relaxes_until_count_met():
+    names = ["Jobs on Design", "Recruiting Talent", "The Lost Interview",
+             "MIT 1992 Talk", "Secrets of Life", "Stanford Speech", "NeXT Era",
+             "Pixar Years", "Keynote 1997", "On Failure"]
+    entries = [_e(f"v{i}", f"{n} (full)", 3601 + i, 100 + i) for i, n in enumerate(names)]
+    # strict stage already reaches the target -> no relaxation needed
+    kept, stage = bs.curate_to_target(entries, limit=100, min_count=5)
+    assert len(kept) >= 5 and stage.get("stage", 0) == 0
+    # unreachable target -> largest set kept, guarantees still hold
+    kept2, stage2 = bs.curate_to_target(entries, limit=100, min_count=500)
+    assert len(kept2) == len(kept)
+    durs = [k["duration"] for k in kept2]
+    assert len(durs) == len(set(durs)) and all(d > 3600 for d in durs)
+
+
+def test_curate_to_target_relaxes_threshold_first():
+    # many near-duplicate titles: strict threshold keeps few, loose keeps more
+    entries = [_e(f"v{i}", f"Steve Jobs The Lost Interview {1970 + i}", 3601 + i, 100 + i)
+               for i in range(20)]
+    entries += [_e(f"w{i}", f"Completely Different Topic {i}", 3700 + i, 50 + i)
+                for i in range(20)]
+    kept_strict = bs.curate(entries, threshold=0.85)
+    kept_loose, stage = bs.curate_to_target(entries, limit=100, min_count=25)
+    assert len(kept_loose) >= len(kept_strict)
+    # guarantees hold at the relaxed stage too
+    durs = [k["duration"] for k in kept_loose]
+    assert len(durs) == len(set(durs)) and all(d > 3600 for d in durs)
+
+
+def test_multi_query_union_dedupes_by_id(monkeypatch):
+    q1 = [_e("a", "Jobs Interview A", 4000, 100), _e("b", "Jobs Interview B", 4200, 90)]
+    q2 = [_e("b", "Jobs Interview B (reupload)", 4200, 95),   # duplicate id -> unioned once
+          _e("c", "Jobs Keynote C", 4400, 80)]
+    seq = iter([q1, q2])
+    monkeypatch.setattr(bs.discovery, "_search_query",
+                        lambda query, limit=None, timeout=None: next(seq))
+    rows = bs.run(["q1", "q2"], limit=100, min_count=3, out=_tmpdir.name + "/u.json")
+    ids = [r["id"] for r in rows]
+    assert sorted(ids) == ["a", "b", "c"]          # 'b' appears once despite two queries
+    assert len(rows) == 3
+
+

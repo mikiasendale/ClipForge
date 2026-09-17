@@ -129,3 +129,11 @@ notifications:
   webhook_url: ""        # POST JSON {kind,severity,title,body,actions} on any notification
   telegram_bot_token: "" # send via Telegram Bot API if both token+chat id set
   telegram_chat_id: ""
+
+# --- direct transcript fetching (youtube-transcript-api service) -------------
+# Hosted REST service (README: github.com/jaypaun007/youtube-transcript-api).
+# Rate limit on the hosted instance: 5 requests/minute -> pacing below.
+transcript_fetch:
+  service_url: "https://youtube-transcript-api-tau-one.vercel.app/transcript"
+  min_interval_s: 13     # ~4.6 req/min, safely under the hosted 5/min limit
+  timeout_s: 60

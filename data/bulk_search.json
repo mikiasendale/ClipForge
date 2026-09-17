@@ -1,0 +1,140 @@
+{
+  "query": "steve jobs interview",
+  "generated_at": "2026-09-17T21:17:42",
+  "count": 16,
+  "rules": {
+    "min_duration_s": 3600,
+    "unique_titles": true,
+    "unique_durations": true
+  },
+  "videos": [
+    {
+      "url": "https://www.youtube.com/watch?v=aGOV5R7M1Js",
+      "video_id": "aGOV5R7M1Js",
+      "title": "Walter Isaacson: Elon Musk, Steve Jobs, Einstein, Da Vinci & Ben Franklin | Lex Fridman Podcast #395",
+      "duration_s": 7670.0,
+      "views": 1712992,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=i5f8bqYYwps",
+      "video_id": "i5f8bqYYwps",
+      "title": "Steve Jobs in 2010, at D8 Conference (Full Video)",
+      "duration_s": 5754.0,
+      "views": 893526,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=M6Oxl5dAnR0",
+      "video_id": "M6Oxl5dAnR0",
+      "title": "The Steve Jobs 95 Interview  unabridged",
+      "duration_s": 4982.0,
+      "views": 563802,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=YXUhLbV8Nrg",
+      "video_id": "YXUhLbV8Nrg",
+      "title": "Steve Jobs MIT 1992: Steve Jobs Talk, Steve Jobs Speech",
+      "duration_s": 4374.0,
+      "views": 455193,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=IzH54FpWAP0",
+      "video_id": "IzH54FpWAP0",
+      "title": "Steve Jobs in 2005 at D3 (Enhanced Quality)",
+      "duration_s": 4385.0,
+      "views": 451641,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=rDqQcmVqAm4",
+      "video_id": "rDqQcmVqAm4",
+      "title": "Steve Jobs   The Lost Interview",
+      "duration_s": 4340.0,
+      "views": 274162,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=oNx1M9atAE0",
+      "video_id": "oNx1M9atAE0",
+      "title": "“India Looks So Poor”: Manu Joseph on Broken Cities, Gen Z, Jobs, CM Vijay & PM Modi | EP-449",
+      "duration_s": 8465.0,
+      "views": 258030,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=zZtWlSDvb_k",
+      "video_id": "zZtWlSDvb_k",
+      "title": "Steve Jobs introduces the iPad - 2010 (full)",
+      "duration_s": 5399.0,
+      "views": 190173,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=zGEOQ6I2Sv4",
+      "video_id": "zGEOQ6I2Sv4",
+      "title": "Steve Jobs In His Own Words (Make Something Wonderful)",
+      "duration_s": 7283.0,
+      "views": 102415,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=L1pA1LqXqXo",
+      "video_id": "L1pA1LqXqXo",
+      "title": "Steve Jobs and Bill Gates Interview (Full Video)",
+      "duration_s": 5374.0,
+      "views": 95814,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=U4lZ0SwPDEs",
+      "video_id": "U4lZ0SwPDEs",
+      "title": "SEE IT: Hasan Piker PRESSED by MS NOW in FIERY interview",
+      "duration_s": 4794.0,
+      "views": 72544,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=c-o73Zh9rdA",
+      "video_id": "c-o73Zh9rdA",
+      "title": "Steve Jobs on Real Career Growth: Why Ownership Beats Consulting (MIT Talk Insights)",
+      "duration_s": 4191.0,
+      "views": 51593,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=yQ16_YxLbB8",
+      "video_id": "yQ16_YxLbB8",
+      "title": "Complete Apple WWDC | Steve Jobs talk and answer developers questions | 1997",
+      "duration_s": 4277.0,
+      "views": 50676,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=eU4WlADVgM8",
+      "video_id": "eU4WlADVgM8",
+      "title": "The 12 Years that Changed Steve Jobs",
+      "duration_s": 3773.0,
+      "views": 40856,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=_iaJhFbmlig",
+      "video_id": "_iaJhFbmlig",
+      "title": "Steve Jobs : the Lost Tapes Recovered | Full Documentary (English Subtitles)",
+      "duration_s": 3941.0,
+      "views": 678,
+      "channel": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=1laUP6_jvX4",
+      "video_id": "1laUP6_jvX4",
+      "title": "Working with Steve Jobs | FULL interview with Guy Kawasaki",
+      "duration_s": 3811.0,
+      "views": 621,
+      "channel": null
+    }
+  ]
+}

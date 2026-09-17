@@ -90,8 +90,10 @@ def _metric(success: bool) -> None:
 
 
 # --- search -----------------------------------------------------------------
-def _search_query(query: str, limit: int = _SEARCH_LIMIT) -> list[dict]:
-    info = ytdlp_json([f"{YT_SEARCH_PREFIX}{limit}:{query}", "--flat-playlist"], timeout=_SEARCH_TIMEOUT)
+def _search_query(query: str, limit: int = _SEARCH_LIMIT,
+                  timeout: int | None = None) -> list[dict]:
+    info = ytdlp_json([f"{YT_SEARCH_PREFIX}{limit}:{query}", "--flat-playlist"],
+                      timeout=timeout or _SEARCH_TIMEOUT)
     if not info:
         return []
     entries = info.get("entries") or []

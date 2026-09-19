@@ -30,6 +30,9 @@ PyYAML==6.0.3
 # Proactive scheduling (P0) — APScheduler drives the daily job + pre-staging
 APScheduler==3.11.3
 
+# Supadata transcript service (timed chunks + async jobs; key in .env)
+supadata==1.6.0
+
 # Tests (optional, for developers)
 pytest==9.1.1
 httpx==0.28.1

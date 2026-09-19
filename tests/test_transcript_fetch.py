@@ -19,7 +19,14 @@ GARBAGE = '0:{"a":"$@1","f":"","b":"i-dEv7N7_G2B1apWtEAsb"} 1:null'
 
 @pytest.fixture(autouse=True)
 def fast(tmp_path, monkeypatch):
-    """Point transcripts at tmp and remove pacing sleeps for tests."""
+    """Point transcripts at tmp and remove pacing sleeps for tests.
+
+    Also clears any ambient SUPADATA_API_KEY so tests NEVER hit the real
+    Supadata API (which would burn the 100-video free quota); supadata tests
+    inject their own fake transport.
+    """
+    monkeypatch.delenv("SUPADATA_API_KEY", raising=False)
+    cfg._config = None
     cfg.TRANSCRIPTS_DIR = tmp_path / "transcripts"
 
     class _NoSleep:
@@ -32,7 +39,7 @@ def fast(tmp_path, monkeypatch):
 def test_fetch_one_service_success(monkeypatch):
     monkeypatch.setattr(tf, "_post",
                         lambda url, payload, timeout: FakeResp(200, {"transcript": "hello world"}))
-    status, text, detail, segs = tf.fetch_one("https://www.youtube.com/watch?v=abc")
+    status, text, detail, segs, _jid = tf.fetch_one("https://www.youtube.com/watch?v=abc")
     assert status == tf.STATUS_OK and text == "hello world"
     assert detail == "hosted service" and segs == []
 
@@ -50,21 +57,21 @@ def test_service_payload_uses_url_field(monkeypatch):
 def test_service_garbage_refused(monkeypatch):
     monkeypatch.setattr(tf, "_post",
                         lambda url, payload, timeout: FakeResp(200, {"transcript": GARBAGE}))
-    status, text, detail, _ = tf.fetch_one("u1")
+    status, text, detail, _, _jid = tf.fetch_one("u1")
     assert status == tf.STATUS_ERROR and text is None
     assert "garbage" in detail
 
 
 def test_404_no_transcript(monkeypatch):
     monkeypatch.setattr(tf, "_post", lambda url, payload, timeout: FakeResp(404, {"detail": "x"}))
-    status, text, _, _ = tf.fetch_one("u")
+    status, text, _, _, _ = tf.fetch_one("u")
     assert status == tf.STATUS_EMPTY and text is None
 
 
 def test_429_retries_then_ok(monkeypatch):
     seq = iter([FakeResp(429), FakeResp(200, {"transcript": "after backoff"})])
     monkeypatch.setattr(tf, "_post", lambda url, payload, timeout: next(seq))
-    status, text, _, _ = tf.fetch_one("u")
+    status, text, _, _, _ = tf.fetch_one("u")
     assert status == tf.STATUS_OK and text == "after backoff"
 
 
@@ -76,7 +83,7 @@ def test_fallback_chain_library_rescues(monkeypatch):
                                      [[0.0, 2.0, "real"]]))
     monkeypatch.setattr(tf, "_fetch_ytdlp",
                         lambda vid: pytest.fail("ytdlp must not run when the library succeeded"))
-    status, text, detail, segs = tf.fetch_one("https://www.youtube.com/watch?v=abcdefghi")
+    status, text, detail, segs, _jid = tf.fetch_one("https://www.youtube.com/watch?v=abcdefghi")
     assert status == tf.STATUS_OK and text == "real text"
     assert detail == "youtube-transcript-api library" and segs == [[0.0, 2.0, "real"]]
 
@@ -85,7 +92,7 @@ def test_fallback_chain_all_fail_reports_each(monkeypatch):
     monkeypatch.setattr(tf, "_post", lambda url, payload, timeout: FakeResp(500, {}))
     monkeypatch.setattr(tf, "_fetch_library", lambda vid: (tf.STATUS_ERROR, None, "IP blocked", []))
     monkeypatch.setattr(tf, "_fetch_ytdlp", lambda vid: (tf.STATUS_ERROR, None, "bot-gated", []))
-    status, text, detail, _ = tf.fetch_one("https://www.youtube.com/watch?v=abcdefghi")
+    status, text, detail, _, _jid = tf.fetch_one("https://www.youtube.com/watch?v=abcdefghi")
     assert status == tf.STATUS_ERROR and text is None
     assert "hosted: HTTP 500" in detail and "library: IP blocked" in detail and "ytdlp: bot-gated" in detail
 
@@ -115,26 +122,114 @@ def test_fetch_bulk_writes_and_is_resumable(monkeypatch):
     monkeypatch.setattr(tf, "_fetch_service",
                         lambda url: (tf.STATUS_OK, f"text {url}", "hosted service"))
     summary = tf.fetch_bulk(vids, log=lambda *_: None)
-    assert summary == {"fetched": 3, "skipped": 0, "failed": 0}
+    assert summary == {"fetched": 3, "skipped": 0, "failed": 0, "pending": 0}
     rec = tf.load("v1")
     assert rec["transcript"] == "text u1" and rec["source"] == "hosted service"
     assert rec["url"] == "u1"
     summary2 = tf.fetch_bulk(vids, log=lambda *_: None)   # resumable: skips all
-    assert summary2 == {"fetched": 0, "skipped": 3, "failed": 0}
+    assert summary2["skipped"] == 3 and summary2["fetched"] == 0
 
 
 def test_fetch_bulk_fail_soft_per_video(monkeypatch):
     vids = [{"video_id": "ok1", "url": "u1", "title": "A"},
             {"video_id": "bad", "url": "u2", "title": "B"},
             {"video_id": "ok2", "url": "u3", "title": "C"}]
-    seq = iter([(tf.STATUS_OK, "t1", "hosted service", []),
-                (tf.STATUS_EMPTY, None, "no transcript available", []),
-                (tf.STATUS_OK, "t3", "hosted service", [])])
-    monkeypatch.setattr(tf, "fetch_one", lambda url, vid=None: next(seq))
+    seq = iter([(tf.STATUS_OK, "t1", "hosted service", [], None),
+                (tf.STATUS_EMPTY, None, "no transcript available", [], None),
+                (tf.STATUS_OK, "t3", "hosted service", [], None)])
+    monkeypatch.setattr(tf, "fetch_one", lambda url, vid=None, log=None: next(seq))
     summary = tf.fetch_bulk(vids, log=lambda *_: None)
     assert summary["fetched"] == 2 and summary["failed"] == 1
     assert tf.load("bad")["status"] == tf.STATUS_EMPTY
     assert tf.load("ok2")["transcript"] == "t3"
+
+
+# --- supadata path ----------------------------------------------------------
+class FakeSD:
+    def __init__(self, result):
+        self._result = result
+
+    def transcript(self, url, lang=None, text=False, chunk_size=None, mode="auto"):
+        return self._result
+
+
+class FakeChunk:
+    def __init__(self, text, offset, duration):
+        self.text, self.offset, self.duration = text, offset, duration
+
+
+class FakeTranscript:
+    def __init__(self, content, lang="en"):
+        self.content, self.lang = content, lang
+        self.available_langs = ["en"]
+
+
+class FakeJob:
+    def __init__(self, job_id):
+        self.job_id = job_id
+
+
+def _sd_key(monkeypatch):
+    monkeypatch.setenv("SUPADATA_API_KEY", "sd_test")
+
+
+def test_supadata_sync_timed_chunks(monkeypatch):
+    _sd_key(monkeypatch)
+    monkeypatch.setattr("supadata.Supadata", lambda api_key: FakeSD(
+        FakeTranscript([FakeChunk("hello", 8150, 1200), FakeChunk("world", 9350, 900)])))
+    status, text, detail, segs, jid = tf.fetch_one("https://youtu.be/abcdefghijk", "v1")
+    assert status == tf.STATUS_OK and jid is None
+    assert text == "hello world"
+    assert segs == [[8.15, 9.35, "hello"], [9.35, 10.25, "world"]]  # ms -> seconds
+    assert "chunks" in detail
+
+
+def test_supadata_async_job_polled(monkeypatch):
+    _sd_key(monkeypatch)
+    monkeypatch.setattr("supadata.Supadata", lambda api_key: FakeSD(FakeJob("job-123")))
+    poll_seq = iter([(tf.STATUS_OK, {"content": [{"text": "job text", "offset": 0, "duration": 1000}],
+                                     "lang": "en"})])
+    monkeypatch.setattr(tf, "_poll_job", lambda job_id, log=None: next(poll_seq))
+    status, text, detail, segs, jid = tf.fetch_one("https://youtu.be/abcdefghijk", "v1")
+    assert status == tf.STATUS_OK and text == "job text"
+    assert jid == "job-123"
+
+
+def test_supadata_limit_exceeded(monkeypatch):
+    _sd_key(monkeypatch)
+    class Err(Exception):
+        error = "limit-exceeded"
+    class RaisingSD:
+        def __init__(self, api_key):
+            pass
+        def transcript(self, **kw):
+            raise Err()
+    monkeypatch.setattr("supadata.Supadata", RaisingSD)
+    monkeypatch.setattr(tf, "_fetch_service", lambda url: (tf.STATUS_OK, "x", "hosted"))
+    status, text, detail, _, _ = tf.fetch_one("u", "v1")
+    # limit-exceeded is an ERROR -> falls through to the hosted service
+    assert status == tf.STATUS_OK and text == "x"
+
+
+def test_supadata_no_key_falls_through(monkeypatch):
+    monkeypatch.delenv("SUPADATA_API_KEY", raising=False)
+    monkeypatch.setattr(tf, "_fetch_service", lambda url: (tf.STATUS_OK, "hosted text", "hosted service"))
+    status, text, detail, _, _ = tf.fetch_one("u", "v1")
+    assert status == tf.STATUS_OK and text == "hosted text"
+
+
+def test_fetch_bulk_pending_job_resumes(monkeypatch):
+    vids = [{"video_id": "p1", "url": "u1", "title": "A"}]
+    import json as _json
+    cfg.TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+    (cfg.TRANSCRIPTS_DIR / "p1.fetch.json").write_text(_json.dumps({
+        "video_id": "p1", "url": "u1", "status": "pending", "job_id": "job-9"}), encoding="utf-8")
+    poll_seq = iter([(tf.STATUS_OK, {"content": "completed text", "lang": "en"})])
+    monkeypatch.setattr(tf, "_poll_job", lambda job_id, log=None: next(poll_seq))
+    summary = tf.fetch_bulk(vids, log=lambda *_: None)
+    assert summary["fetched"] == 1
+    rec = tf.load("p1")
+    assert rec["status"] == "ok" and rec["transcript"] == "completed text"
 
 
 def test_load_from_bulk(tmp_path):

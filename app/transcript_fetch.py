@@ -41,6 +41,8 @@ STATUS_OK = "ok"
 STATUS_EMPTY = "no_transcript"
 STATUS_ERROR = "error"
 
+_PACE_BETWEEN = 2.0   # seconds between Supadata requests (free tier: 100 videos)
+
 _GARBAGE_RE = re.compile(r'\{"a":"\$@')  # React-Flight artifacts leaked by the service
 
 
@@ -68,6 +70,110 @@ def _file_for(video_id: str) -> Path:
 # --- transports (monkeypatched in tests) ------------------------------------
 def _post(url: str, payload: dict, timeout: float) -> requests.Response:
     return requests.post(url, json=payload, timeout=timeout)
+
+
+# --- path 0: Supadata (timed chunks; async jobs for large videos) -----------
+_SUPADATA_BASE = "https://api.supadata.ai/v1"
+
+
+def _supadata_key() -> str | None:
+    import os
+    return os.environ.get("SUPADATA_API_KEY") or None
+
+
+def _poll_job(job_id: str, log: Callable = print,
+              max_wait: float = 300.0, interval: float = 6.0) -> tuple[str, Any]:
+    """Poll GET /transcript/{jobId} until completed/failed (SDK 1.6 has no
+    get_job_status; this is the documented REST endpoint)."""
+    key = _supadata_key()
+    if not key:
+        return STATUS_ERROR, None
+    deadline = time.time() + max_wait
+    waited = 0
+    while time.time() < deadline:
+        try:
+            resp = requests.get(f"{_SUPADATA_BASE}/transcript/{job_id}",
+                                headers={"x-api-key": key}, timeout=_timeout())
+        except requests.RequestException as e:
+            return STATUS_ERROR, f"poll failed: {e}"
+        if resp.status_code == 200:
+            try:
+                return STATUS_OK, resp.json()
+            except ValueError:
+                return STATUS_ERROR, "invalid JSON from job"
+        if resp.status_code in (402, 403, 401):
+            return STATUS_ERROR, f"HTTP {resp.status_code} ({(resp.json() or {}).get('error')})"
+        if resp.status_code == 429:
+            time.sleep(30.0)
+            continue
+        # 202/404/500-ish: still processing or transient -> keep polling
+        time.sleep(interval)
+        waited += interval
+    return STATUS_ERROR, f"job not ready after {max_wait:.0f}s"
+
+
+def _transcript_from_payload(payload: Any) -> tuple[str, str | None, list, str | None]:
+    """Normalize a Supadata Transcript payload -> (text, lang, segments, job_id)."""
+    if payload is None:
+        return "", None, [], None
+    job_id = getattr(payload, "job_id", None) if not isinstance(payload, dict) \
+        else payload.get("job_id")
+    content = payload.get("content") if isinstance(payload, dict) \
+        else getattr(payload, "content", None)
+    lang = payload.get("lang") if isinstance(payload, dict) else getattr(payload, "lang", None)
+    segments: list[list] = []
+    if isinstance(content, str):
+        return content.strip(), lang, segments, job_id
+    for ch in content or []:
+        try:
+            t = ch.get("text") if isinstance(ch, dict) else ch.text
+            off = ch.get("offset") if isinstance(ch, dict) else ch.offset      # ms
+            dur = ch.get("duration") if isinstance(ch, dict) else ch.duration  # ms
+            segments.append([round((off or 0) / 1000.0, 2),
+                             round(((off or 0) + (dur or 0)) / 1000.0, 2), (t or "").strip()])
+        except (AttributeError, TypeError, ValueError):
+            continue
+    text = " ".join(s[2] for s in segments).strip()
+    return text, lang, segments, job_id
+
+
+def _fetch_supadata(video_id: str, video_url: str,
+                    log: Callable = print) -> tuple[str, str | None, str, list, str | None]:
+    """(status, text, detail, segments, job_id). Sync transcript or polled job."""
+    key = _supadata_key()
+    if not key:
+        return STATUS_ERROR, None, "no SUPADATA_API_KEY", [], None
+    try:
+        from supadata import Supadata
+    except Exception as e:
+        return STATUS_ERROR, None, f"supadata unavailable: {e}", [], None
+    sd = Supadata(api_key=key)
+    payload = None
+    try:
+        payload = sd.transcript(url=video_url, lang="en", text=False, mode="auto")
+    except Exception as e:  # SupadataError (or duck-typed) -> structured code
+        code = getattr(e, "error", "") or ""
+        if code in ("transcript-unavailable", "not-found"):
+            return STATUS_EMPTY, None, f"supadata: {code}", [], None
+        if code == "limit-exceeded":
+            return STATUS_ERROR, None, "supadata: limit-exceeded (free tier: 100 videos)", [], None
+        return STATUS_ERROR, None, f"supadata: {code or e}", [], None
+
+    text, lang, segments, job_id = _transcript_from_payload(payload)
+    if job_id:
+        # too large for a sync response -> poll the job (resume-friendly: the
+        # job_id is stored so a crashed run never re-requests = never re-burns quota)
+        log(f"      supadata job {job_id} (async) — polling")
+        jstatus, jpayload = _poll_job(job_id, log)
+        if jstatus != STATUS_OK:
+            return STATUS_ERROR, None, f"supadata job {job_id}: {jpayload}", [], job_id
+        text, lang, segments, _ = _transcript_from_payload(jpayload)
+        if not text:
+            return STATUS_EMPTY, None, f"supadata job {job_id}: empty", [], job_id
+    if not text:
+        return STATUS_EMPTY, None, "supadata: empty transcript", [], job_id
+    detail = f"supadata ({lang or 'auto'}, {len(segments)} chunks)"
+    return STATUS_OK, text, detail, segments, job_id
 
 
 # --- path 1: hosted service -------------------------------------------------
@@ -197,31 +303,43 @@ def _vtt_s(stamp: str) -> float:
 
 
 # --- fallback chain ---------------------------------------------------------
-def fetch_one(video_url: str, video_id: str | None = None) -> tuple[str, str | None, str, list]:
-    """Hosted service -> canonical library -> yt-dlp captions.
+def fetch_one(video_url: str, video_id: str | None = None,
+              log: Callable = print) -> tuple[str, str | None, str, list, str | None]:
+    """Supadata (if keyed) -> hosted service -> library -> yt-dlp captions.
 
     Only a transport/garbage FAILURE triggers the fallbacks; a definitive
-    "no transcript" (404/empty) is returned as-is. Returns
-    (status, transcript|None, source_detail, segments).
+    "no transcript" is returned as-is. Returns
+    (status, transcript|None, source_detail, segments, job_id).
     """
     vid = video_id or _id_from_url(video_url)
+    if _supadata_key():
+        s0, t0, d0, segs0, jid = _fetch_supadata(vid, video_url, log)
+        if s0 == STATUS_OK:
+            return s0, t0, d0, segs0, jid
+        if s0 == STATUS_EMPTY:
+            return s0, None, d0, [], jid
+        # error: fall through to the rest of the chain
+        first_error = f"supadata: {d0}"
+    else:
+        first_error = None
+
     status, text, detail = _fetch_service(video_url)
     if status == STATUS_OK:
-        return status, text, detail, []
+        return status, text, detail, [], None
     if status == STATUS_EMPTY:
-        return status, None, detail, []
+        return status, None, detail, [], None
 
-    errors = [f"hosted: {detail}"]
+    errors = [first_error or f"hosted: {detail}"]
     s2, t2, d2, segs2 = _fetch_library(vid)
     if s2 == STATUS_OK:
-        return s2, t2, d2, segs2
+        return s2, t2, d2, segs2, None
     errors.append(f"library: {d2}")
     s3, t3, d3, segs3 = _fetch_ytdlp(vid)
     if s3 == STATUS_OK:
-        return s3, t3, d3, segs3
+        return s3, t3, d3, segs3, None
     errors.append(f"ytdlp: {d3}")
     worst = STATUS_EMPTY if (s2 == STATUS_EMPTY or s3 == STATUS_EMPTY) else STATUS_ERROR
-    return worst, None, "; ".join(errors), []
+    return worst, None, "; ".join(errors), [], None
 
 
 def _id_from_url(url: str) -> str | None:
@@ -237,8 +355,7 @@ def fetch_bulk(videos: list[dict], out_dir: Path | None = None,
     Writes one ``.fetch.json`` per video into ``data/transcripts``. Fail-soft
     per video. Returns {fetched, skipped, failed}.
     """
-    summary = {"fetched": 0, "skipped": 0, "failed": 0}
-    interval = _min_interval()
+    summary = {"fetched": 0, "skipped": 0, "failed": 0, "pending": 0}
     _SERVICE.consec_garbage = 0
     _SERVICE.broken = False   # fresh breaker per run
     for i, v in enumerate(videos):
@@ -247,23 +364,48 @@ def fetch_bulk(videos: list[dict], out_dir: Path | None = None,
         if not vid:
             continue
         dest = _file_for(vid)
-        if dest.exists():
+        existing = load(vid)
+        if existing and existing.get("status") == "ok":
             summary["skipped"] += 1
             continue
+        if existing and existing.get("status") == "pending" and existing.get("job_id"):
+            # resume an async job instead of re-requesting (never re-burns quota)
+            log(f"[transcripts] {i + 1}/{len(videos)} resuming job {existing['job_id']}  {vid}")
+            jstatus, jpayload = _poll_job(existing["job_id"], log)
+            if jstatus == STATUS_OK:
+                text, lang, segments, _ = _transcript_from_payload(jpayload)
+                if text:
+                    rec = {**existing, "status": "ok", "transcript": text,
+                           "chars": len(text), "segments": segments,
+                           "lang": lang, "source": "supadata",
+                           "fetched_at": datetime.now().isoformat(timespec="seconds")}
+                    _write(dest, rec)
+                    summary["fetched"] += 1
+                    log(f"[transcripts] {i + 1}/{len(videos)} ok (job)  {vid}  ({len(text)} chars)")
+                    continue
+            existing["error"] = f"job {existing['job_id']} not completed: {jpayload}"
+            _write(dest, existing)
+            summary["failed"] += 1
+            continue
         if i and summary["fetched"] + summary["failed"]:
-            time.sleep(interval)  # pace: stay under the hosted 5 req/min limit
-        status, text, detail, segs = fetch_one(url, vid)
+            time.sleep(_PACE_BETWEEN)
+        status, text, detail, segs, job_id = fetch_one(url, vid, log)
         record = {
             "video_id": vid, "url": url, "title": v.get("title"),
-            "status": status if status != STATUS_OK else "ok",
-            "source": detail if status == STATUS_OK else detail,
+            "status": status, "source": detail,
             "fetched_at": datetime.now().isoformat(timespec="seconds"),
         }
         if status == STATUS_OK:
-            record.update({"transcript": text, "chars": len(text or ""), "segments": segs})
+            record.update({"transcript": text, "chars": len(text or ""),
+                           "segments": segs, "source": detail})
             summary["fetched"] += 1
-            log(f"[transcripts] {i + 1}/{len(videos)} ok  {vid}  ({len(text or '')} chars, "
-                f"{len(segs)} cues) via {detail}  {(v.get('title') or '')[:44]}")
+            log(f"[transcripts] {i + 1}/{len(videos)} ok  {vid}  ({len(text or '')} chars) "
+                f"via {detail}  {(v.get('title') or '')[:44]}")
+        elif job_id:
+            # async job still processing -> keep job_id for a resumable re-run
+            record.update({"status": "pending", "job_id": job_id})
+            summary["pending"] += 1
+            log(f"[transcripts] {i + 1}/{len(videos)} pending (job {job_id})  {vid}")
         else:
             record["error"] = detail
             summary["failed"] += 1
